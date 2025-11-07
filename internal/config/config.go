@@ -37,6 +37,7 @@ func New() *Manager {
 			CredentialsFile: DefaultCredentialsFile,
 			LogFile:         DefaultLogFile,
 			LogLevel:        DefaultLogLevel,
+			Integrations:    make(map[string]bool),
 		},
 		configFile: DefaultConfigFile,
 	}
@@ -151,12 +152,36 @@ func (m *Manager) SaveConfig() error {
 	configViper.Set("log_file", m.config.LogFile)
 	configViper.Set("log_level", m.config.LogLevel)
 	configViper.Set("skip_ssl_verify", m.config.SkipSSLVerify)
+	
+	// Save integrations if they exist
+	if m.config.Integrations != nil && len(m.config.Integrations) > 0 {
+		configViper.Set("integrations", m.config.Integrations)
+	}
 
 	if err := configViper.WriteConfigAs(m.configFile); err != nil {
 		return fmt.Errorf("error writing config file: %w", err)
 	}
 
 	return nil
+}
+
+// IsIntegrationEnabled checks if an integration is enabled
+// Returns false if not specified (default behavior - integrations are disabled by default)
+func (m *Manager) IsIntegrationEnabled(name string) bool {
+	if m.config.Integrations == nil {
+		return false
+	}
+	enabled, exists := m.config.Integrations[name]
+	return exists && enabled
+}
+
+// SetIntegrationEnabled sets the enabled status for an integration
+func (m *Manager) SetIntegrationEnabled(name string, enabled bool) error {
+	if m.config.Integrations == nil {
+		m.config.Integrations = make(map[string]bool)
+	}
+	m.config.Integrations[name] = enabled
+	return m.SaveConfig()
 }
 
 // setupDirectories creates necessary directories

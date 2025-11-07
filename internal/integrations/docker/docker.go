@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"patchmon-agent/internal/utils"
 	"patchmon-agent/pkg/models"
 
 	"github.com/docker/docker/api/types/container"
@@ -169,7 +170,7 @@ func (d *Integration) Collect(ctx context.Context) (*models.IntegrationData, err
 		Name:          d.Name(),
 		Enabled:       true,
 		Data:          dockerData,
-		CollectedAt:   time.Now(),
+		CollectedAt:   utils.GetCurrentTimeUTC(),
 		ExecutionTime: executionTime,
 	}, nil
 }

@@ -156,10 +156,11 @@ type Credentials struct {
 
 // Config represents agent configuration
 type Config struct {
-	PatchmonServer  string `yaml:"patchmon_server" mapstructure:"patchmon_server"`
-	APIVersion      string `yaml:"api_version" mapstructure:"api_version"`
-	CredentialsFile string `yaml:"credentials_file" mapstructure:"credentials_file"`
-	LogFile         string `yaml:"log_file" mapstructure:"log_file"`
-	LogLevel        string `yaml:"log_level" mapstructure:"log_level"`
-	SkipSSLVerify   bool   `yaml:"skip_ssl_verify" mapstructure:"skip_ssl_verify"`
+	PatchmonServer  string            `yaml:"patchmon_server" mapstructure:"patchmon_server"`
+	APIVersion      string            `yaml:"api_version" mapstructure:"api_version"`
+	CredentialsFile string            `yaml:"credentials_file" mapstructure:"credentials_file"`
+	LogFile         string            `yaml:"log_file" mapstructure:"log_file"`
+	LogLevel        string            `yaml:"log_level" mapstructure:"log_level"`
+	SkipSSLVerify   bool              `yaml:"skip_ssl_verify" mapstructure:"skip_ssl_verify"`
+	Integrations    map[string]bool   `yaml:"integrations" mapstructure:"integrations"`
 }

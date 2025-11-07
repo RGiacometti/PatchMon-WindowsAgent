@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -107,6 +109,15 @@ func runService() error {
 				} else {
 					logger.Info("Update available, run 'patchmon-agent update-agent' to update")
 				}
+			case "integration_toggle":
+				if err := toggleIntegration(m.integrationName, m.integrationEnabled); err != nil {
+					logger.WithError(err).Warn("integration_toggle failed")
+				} else {
+					logger.WithFields(map[string]interface{}{
+						"integration": m.integrationName,
+						"enabled":     m.integrationEnabled,
+					}).Info("Integration toggled successfully, service will restart")
+				}
 			}
 		}
 	}
@@ -116,6 +127,11 @@ func runService() error {
 func startIntegrationMonitoring(ctx context.Context, eventChan chan<- interface{}) {
 	// Create integration manager
 	integrationMgr := integrations.NewManager(logger)
+
+	// Set enabled checker to respect config.yml settings
+	integrationMgr.SetEnabledChecker(func(name string) bool {
+		return cfgManager.IsIntegrationEnabled(name)
+	})
 
 	// Register integrations
 	dockerInteg := docker.New(logger)
@@ -136,10 +152,12 @@ func startIntegrationMonitoring(ctx context.Context, eventChan chan<- interface{
 }
 
 type wsMsg struct {
-	kind     string
-	interval int
-	version  string
-	force    bool
+	kind               string
+	interval           int
+	version            string
+	force              bool
+	integrationName    string
+	integrationEnabled bool
 }
 
 func wsLoop(out chan<- wsMsg, dockerEvents <-chan interface{}) {
@@ -169,6 +187,16 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 		wsURL = "wss://" + strings.TrimPrefix(wsURL, "https://")
 	} else if strings.HasPrefix(wsURL, "http://") {
 		wsURL = "ws://" + strings.TrimPrefix(wsURL, "http://")
+	} else if strings.HasPrefix(wsURL, "wss://") {
+		// Already a WebSocket secure URL, use as-is
+		// No conversion needed
+	} else if strings.HasPrefix(wsURL, "ws://") {
+		// Already a WebSocket URL, use as-is
+		// No conversion needed
+	} else {
+		// No protocol prefix - assume HTTPS and use WSS
+		logger.WithField("server", server).Warn("Server URL missing protocol prefix, assuming HTTPS")
+		wsURL = "wss://" + wsURL
 	}
 	if strings.HasSuffix(wsURL, "/") {
 		wsURL = strings.TrimRight(wsURL, "/")
@@ -248,6 +276,8 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 			Version        string `json:"version"`
 			Force          bool   `json:"force"`
 			Message        string `json:"message"`
+			Integration    string `json:"integration"`
+			Enabled        bool   `json:"enabled"`
 		}
 		if json.Unmarshal(data, &payload) == nil {
 			switch payload.Type {
@@ -271,7 +301,47 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}) error {
 					version: payload.Version,
 					force:   payload.Force,
 				}
+			case "integration_toggle":
+				logger.WithFields(map[string]interface{}{
+					"integration": payload.Integration,
+					"enabled":     payload.Enabled,
+				}).Info("integration_toggle received")
+				out <- wsMsg{
+					kind:               "integration_toggle",
+					integrationName:    payload.Integration,
+					integrationEnabled: payload.Enabled,
+				}
 			}
 		}
 	}
+}
+
+// toggleIntegration toggles an integration on or off and restarts the service
+func toggleIntegration(integrationName string, enabled bool) error {
+	logger.WithFields(map[string]interface{}{
+		"integration": integrationName,
+		"enabled":     enabled,
+	}).Info("Toggling integration")
+
+	// Update config.yml
+	if err := cfgManager.SetIntegrationEnabled(integrationName, enabled); err != nil {
+		return fmt.Errorf("failed to update config: %w", err)
+	}
+
+	logger.Info("Config updated, restarting patchmon-agent service...")
+	
+	// Restart the service to apply changes
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "systemctl", "restart", "patchmon-agent")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		logger.WithError(err).Warn("Failed to restart service (this is not critical)")
+		return fmt.Errorf("failed to restart service: %w, output: %s", err, string(output))
+	}
+
+	logger.WithField("output", string(output)).Debug("Service restart command completed")
+	logger.Info("Service restarted successfully")
+	return nil
 }

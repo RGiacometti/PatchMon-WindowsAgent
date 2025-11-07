@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"patchmon-agent/internal/utils"
 	"patchmon-agent/pkg/models"
 
 	"github.com/sirupsen/logrus"
@@ -14,9 +15,10 @@ import (
 
 // Manager orchestrates integration discovery and data collection
 type Manager struct {
-	integrations []Integration
-	logger       *logrus.Logger
-	mu           sync.RWMutex
+	integrations      []Integration
+	logger            *logrus.Logger
+	mu                sync.RWMutex
+	isEnabledChecker  func(string) bool // Optional function to check if integration is enabled
 }
 
 // NewManager creates a new integration manager
@@ -25,6 +27,13 @@ func NewManager(logger *logrus.Logger) *Manager {
 		integrations: make([]Integration, 0),
 		logger:       logger,
 	}
+}
+
+// SetEnabledChecker sets the function to check if an integration is enabled
+func (m *Manager) SetEnabledChecker(checker func(string) bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.isEnabledChecker = checker
 }
 
 // Register adds an integration to the manager
@@ -36,18 +45,27 @@ func (m *Manager) Register(integration Integration) {
 }
 
 // DiscoverIntegrations checks which integrations are available and returns them
+// Only returns integrations that are both available and enabled (if enabled checker is set)
 func (m *Manager) DiscoverIntegrations() []Integration {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	available := make([]Integration, 0)
 	for _, integration := range m.integrations {
-		if integration.IsAvailable() {
-			available = append(available, integration)
-			m.logger.WithField("integration", integration.Name()).Info("✓ Integration discovered")
-		} else {
+		// Check if integration is available
+		if !integration.IsAvailable() {
 			m.logger.WithField("integration", integration.Name()).Debug("✗ Integration not available")
+			continue
 		}
+
+		// Check if integration is enabled (if enabled checker is set)
+		if m.isEnabledChecker != nil && !m.isEnabledChecker(integration.Name()) {
+			m.logger.WithField("integration", integration.Name()).Debug("✗ Integration disabled in config")
+			continue
+		}
+
+		available = append(available, integration)
+		m.logger.WithField("integration", integration.Name()).Info("✓ Integration discovered")
 	}
 
 	// Sort by priority (lower number = higher priority)
@@ -95,7 +113,7 @@ func (m *Manager) CollectAll(ctx context.Context) map[string]*models.Integration
 				data = &models.IntegrationData{
 					Name:          name,
 					Enabled:       true,
-					CollectedAt:   time.Now(),
+					CollectedAt:   utils.GetCurrentTimeUTC(),
 					ExecutionTime: time.Since(startTime).Seconds(),
 					Error:         err.Error(),
 				}
@@ -131,16 +149,25 @@ func (m *Manager) GetIntegration(name string) (Integration, error) {
 }
 
 // GetRealtimeIntegrations returns all integrations that support real-time monitoring
+// Only returns integrations that are enabled (if enabled checker is set)
 func (m *Manager) GetRealtimeIntegrations() []RealtimeIntegration {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	realtime := make([]RealtimeIntegration, 0)
 	for _, integration := range m.integrations {
-		if integration.SupportsRealtime() {
-			if rtInteg, ok := integration.(RealtimeIntegration); ok {
-				realtime = append(realtime, rtInteg)
-			}
+		if !integration.SupportsRealtime() {
+			continue
+		}
+
+		// Check if integration is enabled (if enabled checker is set)
+		if m.isEnabledChecker != nil && !m.isEnabledChecker(integration.Name()) {
+			m.logger.WithField("integration", integration.Name()).Debug("✗ Realtime integration disabled in config")
+			continue
+		}
+
+		if rtInteg, ok := integration.(RealtimeIntegration); ok {
+			realtime = append(realtime, rtInteg)
 		}
 	}
 

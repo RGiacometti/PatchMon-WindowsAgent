@@ -230,6 +230,15 @@ func sendIntegrationData() {
 	// Create integration manager
 	integrationMgr := integrations.NewManager(logger)
 
+	// Set enabled checker to respect config.yml settings
+	// Load config first to check integration status
+	if err := cfgManager.LoadConfig(); err != nil {
+		logger.WithError(err).Debug("Failed to load config for integration check")
+	}
+	integrationMgr.SetEnabledChecker(func(name string) bool {
+		return cfgManager.IsIntegrationEnabled(name)
+	})
+
 	// Register available integrations
 	integrationMgr.Register(docker.New(logger))
 	// Future: integrationMgr.Register(proxmox.New(logger))

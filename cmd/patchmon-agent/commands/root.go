@@ -7,6 +7,7 @@ import (
 
 	"patchmon-agent/internal/config"
 	"patchmon-agent/internal/constants"
+	"patchmon-agent/internal/utils"
 	"patchmon-agent/internal/version"
 
 	"github.com/sirupsen/logrus"
@@ -62,11 +63,18 @@ func init() {
 func initialiseAgent() {
 	// Initialise logger
 	logger = logrus.New()
+	// Get timezone for log timestamps
+	// Note: logrus TextFormatter doesn't directly support timezone
+	// The timestamp will use the system timezone, but we can configure
+	// the TZ environment variable to control this
+	tz_loc := utils.GetTimezoneLocation()
 	logger.SetFormatter(&logrus.TextFormatter{
 		DisableTimestamp: false,
 		FullTimestamp:    true,
 		TimestampFormat:  "2006-01-02T15:04:05",
 	})
+	// Store timezone location for future use if needed
+	_ = tz_loc
 
 	// Initialise configuration manager
 	cfgManager = config.New()
@@ -123,3 +131,4 @@ func checkRoot() error {
 	}
 	return nil
 }
+
