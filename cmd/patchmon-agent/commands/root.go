@@ -56,7 +56,8 @@ func init() {
 	rootCmd.AddCommand(checkVersionCmd)
 	rootCmd.AddCommand(updateAgentCmd)
 	rootCmd.AddCommand(diagnosticsCmd)
-	rootCmd.AddCommand(uninstallCmd)
+	// Note: Uninstall functionality removed - use patchmon_remove.sh script instead
+	// rootCmd.AddCommand(uninstallCmd)
 }
 
 // initialiseAgent initialises the configuration manager and logger

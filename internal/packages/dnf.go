@@ -41,6 +41,14 @@ func (m *DNFManager) GetPackages() []models.Package {
 
 	m.logger.WithField("manager", packageManager).Debug("Using package manager")
 
+	// Refresh metadata cache to ensure we have current information
+	// This is especially important for Fedora which caches metadata aggressively
+	m.logger.Debug("Refreshing package metadata...")
+	makecacheCmd := exec.Command(packageManager, "makecache", "-q")
+	if err := makecacheCmd.Run(); err != nil {
+		m.logger.WithError(err).Warn("Failed to refresh metadata cache, continuing anyway")
+	}
+
 	// Get installed packages
 	m.logger.Debug("Getting installed packages...")
 	listCmd := exec.Command(packageManager, "list", "installed")
