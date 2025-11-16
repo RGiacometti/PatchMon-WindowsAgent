@@ -87,6 +87,17 @@ func sendReport() error {
 		networkInfo.DNSServers = []string{}
 	}
 
+	// Check if reboot is required and get installed kernel
+	logger.Info("Checking reboot status...")
+	needsReboot, rebootReason := systemDetector.CheckRebootRequired()
+	installedKernel := systemDetector.GetLatestInstalledKernel()
+	logger.WithFields(logrus.Fields{
+		"needs_reboot":        needsReboot,
+		"reason":              rebootReason,
+		"installed_kernel":    installedKernel,
+		"running_kernel":      systemInfo.KernelVersion,
+	}).Info("Reboot status check completed")
+
 	// Get package information
 	logger.Info("Collecting package information...")
 	packageList, err := packageMgr.GetPackages()
@@ -159,9 +170,10 @@ func sendReport() error {
 		IP:                ipAddress,
 		Architecture:      architecture,
 		AgentVersion:      version.Version,
-		MachineID:         systemDetector.GetMachineID(),
-		KernelVersion:     systemInfo.KernelVersion,
-		SELinuxStatus:     systemInfo.SELinuxStatus,
+		MachineID:             systemDetector.GetMachineID(),
+		KernelVersion:         systemInfo.KernelVersion,
+		InstalledKernelVersion: installedKernel,
+		SELinuxStatus:         systemInfo.SELinuxStatus,
 		SystemUptime:      systemInfo.SystemUptime,
 		LoadAverage:       systemInfo.LoadAverage,
 		CPUModel:          hardwareInfo.CPUModel,
@@ -173,6 +185,8 @@ func sendReport() error {
 		DNSServers:        networkInfo.DNSServers,
 		NetworkInterfaces: networkInfo.NetworkInterfaces,
 		ExecutionTime:     executionTime,
+		NeedsReboot:       needsReboot,
+		RebootReason:      rebootReason,
 	}
 
 	// Send report

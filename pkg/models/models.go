@@ -74,9 +74,10 @@ type ReportPayload struct {
 	IP                string             `json:"ip"`
 	Architecture      string             `json:"architecture"`
 	AgentVersion      string             `json:"agentVersion"`
-	MachineID         string             `json:"machineId"`
-	KernelVersion     string             `json:"kernelVersion"`
-	SELinuxStatus     string             `json:"selinuxStatus"`
+	MachineID             string             `json:"machineId"`
+	KernelVersion         string             `json:"kernelVersion"`
+	InstalledKernelVersion string             `json:"installedKernelVersion,omitempty"`
+	SELinuxStatus         string             `json:"selinuxStatus"`
 	SystemUptime      string             `json:"systemUptime"`
 	LoadAverage       []float64          `json:"loadAverage"`
 	CPUModel          string             `json:"cpuModel"`
@@ -88,6 +89,8 @@ type ReportPayload struct {
 	DNSServers        []string           `json:"dnsServers"`
 	NetworkInterfaces []NetworkInterface `json:"networkInterfaces"`
 	ExecutionTime     float64            `json:"executionTime"` // Collection time in seconds
+	NeedsReboot       bool               `json:"needsReboot"`
+	RebootReason      string             `json:"rebootReason,omitempty"`
 }
 
 // PingResponse represents server ping response

@@ -41,26 +41,29 @@ func (m *DNFManager) GetPackages() []models.Package {
 
 	m.logger.WithField("manager", packageManager).Debug("Using package manager")
 
-	// Refresh metadata cache to ensure we have current information
-	// This is especially important for Fedora which caches metadata aggressively
-	m.logger.Debug("Refreshing package metadata...")
-	makecacheCmd := exec.Command(packageManager, "makecache", "-q")
-	if err := makecacheCmd.Run(); err != nil {
-		m.logger.WithError(err).Warn("Failed to refresh metadata cache, continuing anyway")
-	}
+	// Note: We don't run 'makecache' because:
+	// 1. It causes delays on systems without internet (tries to reach remote repos)
+	// 2. It's not needed for listing installed packages
+	// 3. The 'check-update' command already refreshes metadata when needed
+	// 4. Fedora's cache issue (if any) is resolved by using proper update checks
 
 	// Get installed packages
 	m.logger.Debug("Getting installed packages...")
-	listCmd := exec.Command(packageManager, "list", "installed")
+	listCmd := exec.Command(packageManager, "list", "--installed")
 	listOutput, err := listCmd.Output()
 	var installedPackages map[string]string
 	if err != nil {
-		m.logger.WithError(err).Warn("Failed to get installed packages")
+		m.logger.WithError(err).Error("Failed to get installed packages - this will result in 0 packages being reported")
 		installedPackages = make(map[string]string)
 	} else {
+		m.logger.WithField("outputSize", len(listOutput)).Debug("Received output from list installed command")
 		m.logger.Debug("Parsing installed packages...")
 		installedPackages = m.parseInstalledPackages(string(listOutput))
-		m.logger.WithField("count", len(installedPackages)).Debug("Found installed packages")
+		m.logger.WithField("count", len(installedPackages)).Info("Found installed packages")
+
+		if len(installedPackages) == 0 {
+			m.logger.Warn("No installed packages found - this may indicate a parsing issue")
+		}
 	}
 
 	// Get security updates first to identify which packages are security updates
@@ -85,7 +88,16 @@ func (m *DNFManager) GetPackages() []models.Package {
 
 	// Merge and deduplicate packages
 	packages := CombinePackageData(installedPackages, upgradablePackages)
-	m.logger.WithField("total", len(packages)).Debug("Total packages collected")
+	m.logger.WithFields(logrus.Fields{
+		"total":             len(packages),
+		"installed":         len(installedPackages),
+		"upgradable":        len(upgradablePackages),
+		"securityAvailable": len(securityPackages),
+	}).Info("Package collection completed")
+
+	if len(packages) == 0 {
+		m.logger.Error("WARNING: Returning 0 packages - this will show as empty in PatchMon UI")
+	}
 
 	return packages
 }
@@ -114,7 +126,7 @@ func (m *DNFManager) getSecurityPackages(packageManager string) map[string]bool 
 		line := strings.TrimSpace(scanner.Text())
 
 		// Skip header lines and empty lines
-		if line == "" || strings.Contains(line, "Last metadata") || 
+		if line == "" || strings.Contains(line, "Last metadata") ||
 			strings.Contains(line, "expiration") || strings.HasPrefix(line, "Loading") {
 			continue
 		}
@@ -126,9 +138,16 @@ func (m *DNFManager) getSecurityPackages(packageManager string) map[string]bool 
 			continue
 		}
 
-		// Skip lines that don't start with ALSA/RHSA (advisory IDs)
+		// Skip lines that don't start with advisory IDs
+		// Common advisory ID prefixes: RHSA (Red Hat), ALSA (AlmaLinux), ELSA (Oracle/Enterprise Linux), CESA (CentOS)
 		// This filters out header lines like "expiration"
-		if !strings.HasPrefix(fields[0], "ALSA") && !strings.HasPrefix(fields[0], "RHSA") {
+		advisoryID := fields[0]
+		isAdvisory := strings.HasPrefix(advisoryID, "RHSA") ||
+			strings.HasPrefix(advisoryID, "ALSA") ||
+			strings.HasPrefix(advisoryID, "ELSA") ||
+			strings.HasPrefix(advisoryID, "CESA")
+
+		if !isAdvisory {
 			continue
 		}
 
@@ -136,12 +155,17 @@ func (m *DNFManager) getSecurityPackages(packageManager string) map[string]bool 
 		// We need to extract just the base package name
 		packageNameWithVersion := fields[2]
 		basePackageName := m.extractBasePackageName(packageNameWithVersion)
-		
+
 		if basePackageName != "" {
 			securityPackages[basePackageName] = true
+			m.logger.WithFields(logrus.Fields{
+				"advisory": advisoryID,
+				"package":  basePackageName,
+			}).Debug("Detected security package")
 		}
 	}
 
+	m.logger.WithField("count", len(securityPackages)).Info("Security packages identified")
 	return securityPackages
 }
 
@@ -155,7 +179,7 @@ func (m *DNFManager) extractBasePackageName(packageString string) string {
 	if idx := strings.LastIndex(packageString, "."); idx > 0 {
 		archSuffix := packageString[idx+1:]
 		// Check if it's a known architecture
-		if archSuffix == "x86_64" || archSuffix == "i686" || archSuffix == "i386" || 
+		if archSuffix == "x86_64" || archSuffix == "i686" || archSuffix == "i386" ||
 			archSuffix == "noarch" || archSuffix == "aarch64" || archSuffix == "arm64" {
 			baseName = packageString[:idx]
 		}
@@ -205,7 +229,7 @@ func (m *DNFManager) parseUpgradablePackages(output string, packageManager strin
 		// Get current version from installed packages map (already collected)
 		// Try exact match first
 		currentVersion := installedPackages[packageName]
-		
+
 		// If not found, try to find by base name (handles architecture suffixes)
 		// e.g., if packageName is "package" but installed has "package.x86_64"
 		// or if packageName is "package.x86_64" but installed has "package"
@@ -214,13 +238,13 @@ func (m *DNFManager) parseUpgradablePackages(output string, packageManager strin
 			basePackageName := packageName
 			if idx := strings.LastIndex(packageName, "."); idx > 0 {
 				archSuffix := packageName[idx+1:]
-				if archSuffix == "x86_64" || archSuffix == "i686" || archSuffix == "i386" || 
+				if archSuffix == "x86_64" || archSuffix == "i686" || archSuffix == "i386" ||
 					archSuffix == "noarch" || archSuffix == "aarch64" || archSuffix == "arm64" {
 					basePackageName = packageName[:idx]
 					currentVersion = installedPackages[basePackageName]
 				}
 			}
-			
+
 			// If still not found, search through installed packages for matching base name
 			if currentVersion == "" {
 				for installedName, version := range installedPackages {
@@ -229,12 +253,12 @@ func (m *DNFManager) parseUpgradablePackages(output string, packageManager strin
 					if idx := strings.LastIndex(installedName, "."); idx > 0 {
 						// Check if the part after the last dot looks like an architecture
 						archSuffix := installedName[idx+1:]
-						if archSuffix == "x86_64" || archSuffix == "i686" || archSuffix == "i386" || 
+						if archSuffix == "x86_64" || archSuffix == "i686" || archSuffix == "i386" ||
 							archSuffix == "noarch" || archSuffix == "aarch64" || archSuffix == "arm64" {
 							baseName = installedName[:idx]
 						}
 					}
-					
+
 					// Compare base names (handles both cases: package vs package.x86_64)
 					if baseName == basePackageName || baseName == packageName {
 						currentVersion = version
@@ -243,10 +267,10 @@ func (m *DNFManager) parseUpgradablePackages(output string, packageManager strin
 				}
 			}
 		}
-		
+
 		// If still not found in installed packages, try to get it with a command as fallback
 		if currentVersion == "" {
-			getCurrentCmd := exec.Command(packageManager, "list", "installed", packageName)
+			getCurrentCmd := exec.Command(packageManager, "list", "--installed", packageName)
 			getCurrentOutput, err := getCurrentCmd.Output()
 			if err == nil {
 				for currentLine := range strings.SplitSeq(string(getCurrentOutput), "\n") {
@@ -277,8 +301,8 @@ func (m *DNFManager) parseUpgradablePackages(output string, packageManager strin
 			})
 		} else {
 			m.logger.WithFields(logrus.Fields{
-				"package":         packageName,
-				"currentVersion":  currentVersion,
+				"package":          packageName,
+				"currentVersion":   currentVersion,
 				"availableVersion": availableVersion,
 			}).Debug("Skipping package due to missing version information")
 		}
