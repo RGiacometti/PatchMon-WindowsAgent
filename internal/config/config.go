@@ -21,6 +21,13 @@ const (
 	CronFilePath           = "/etc/cron.d/patchmon-agent"
 )
 
+// AvailableIntegrations lists all integrations that can be enabled/disabled
+// Add new integrations here as they are implemented
+var AvailableIntegrations = []string{
+	"docker",
+	// Future: "proxmox", "kubernetes", etc.
+}
+
 // Manager handles configuration management
 type Manager struct {
 	config      *models.Config
@@ -37,6 +44,7 @@ func New() *Manager {
 			CredentialsFile: DefaultCredentialsFile,
 			LogFile:         DefaultLogFile,
 			LogLevel:        DefaultLogLevel,
+			UpdateInterval:  60, // Default to 60 minutes
 			Integrations:    make(map[string]bool),
 		},
 		configFile: DefaultConfigFile,
@@ -81,6 +89,28 @@ func (m *Manager) LoadConfig() error {
 	if err := viper.Unmarshal(m.config); err != nil {
 		return fmt.Errorf("error unmarshaling config: %w", err)
 	}
+
+	// Handle backward compatibility: set defaults for fields that may not exist in older configs
+	// If UpdateInterval is 0 or not set, use default of 60 minutes
+	if m.config.UpdateInterval <= 0 {
+		m.config.UpdateInterval = 60
+	}
+
+	// If Integrations map is nil (not set in old configs), initialize it
+	if m.config.Integrations == nil {
+		m.config.Integrations = make(map[string]bool)
+	}
+
+	// Ensure all available integrations are present in the map with default value (false)
+	// This ensures config.yml always shows all integrations, even if they're disabled
+	for _, integrationName := range AvailableIntegrations {
+		if _, exists := m.config.Integrations[integrationName]; !exists {
+			m.config.Integrations[integrationName] = false
+		}
+	}
+
+	// ReportOffset can be 0 - it will be recalculated if missing
+	// No need to set a default here as it's calculated dynamically
 
 	return nil
 }
@@ -152,17 +182,45 @@ func (m *Manager) SaveConfig() error {
 	configViper.Set("log_file", m.config.LogFile)
 	configViper.Set("log_level", m.config.LogLevel)
 	configViper.Set("skip_ssl_verify", m.config.SkipSSLVerify)
-	
-	// Save integrations if they exist
-	if len(m.config.Integrations) > 0 {
-		configViper.Set("integrations", m.config.Integrations)
+	configViper.Set("update_interval", m.config.UpdateInterval)
+	configViper.Set("report_offset", m.config.ReportOffset)
+
+	// Always save integrations map with all available integrations
+	// This ensures config.yml always shows all integrations with their current state
+	// Ensure all available integrations are present before saving
+	if m.config.Integrations == nil {
+		m.config.Integrations = make(map[string]bool)
 	}
+	for _, integrationName := range AvailableIntegrations {
+		if _, exists := m.config.Integrations[integrationName]; !exists {
+			m.config.Integrations[integrationName] = false
+		}
+	}
+	configViper.Set("integrations", m.config.Integrations)
 
 	if err := configViper.WriteConfigAs(m.configFile); err != nil {
 		return fmt.Errorf("error writing config file: %w", err)
 	}
 
 	return nil
+}
+
+// SetUpdateInterval sets the update interval and saves it to config file
+func (m *Manager) SetUpdateInterval(interval int) error {
+	if interval <= 0 {
+		return fmt.Errorf("invalid update interval: %d (must be > 0)", interval)
+	}
+	m.config.UpdateInterval = interval
+	return m.SaveConfig()
+}
+
+// SetReportOffset sets the report offset (in seconds) and saves it to config file
+func (m *Manager) SetReportOffset(offsetSeconds int) error {
+	if offsetSeconds < 0 {
+		return fmt.Errorf("invalid report offset: %d (must be >= 0)", offsetSeconds)
+	}
+	m.config.ReportOffset = offsetSeconds
+	return m.SaveConfig()
 }
 
 // IsIntegrationEnabled checks if an integration is enabled

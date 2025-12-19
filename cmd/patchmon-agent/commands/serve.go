@@ -14,6 +14,7 @@ import (
 	"patchmon-agent/internal/client"
 	"patchmon-agent/internal/integrations"
 	"patchmon-agent/internal/integrations/docker"
+	"patchmon-agent/internal/utils"
 	"patchmon-agent/pkg/models"
 
 	"github.com/gorilla/websocket"
@@ -44,14 +45,106 @@ func runService() error {
 	httpClient := client.New(cfgManager, logger)
 	ctx := context.Background()
 
-	// obtain initial interval
-	intervalMinutes := 60
-	if resp, err := httpClient.GetUpdateInterval(ctx); err == nil && resp.UpdateInterval > 0 {
-		intervalMinutes = resp.UpdateInterval
+	// Get api_id for offset calculation
+	apiId := cfgManager.GetCredentials().APIID
+
+	// Load interval from config.yml (with default fallback)
+	intervalMinutes := cfgManager.GetConfig().UpdateInterval
+	if intervalMinutes <= 0 {
+		// Default to 60 if not set or invalid
+		intervalMinutes = 60
+		logger.WithField("interval", intervalMinutes).Info("Using default interval (not set in config)")
+	} else {
+		logger.WithField("interval", intervalMinutes).Info("Loaded interval from config.yml")
 	}
 
-	ticker := time.NewTicker(time.Duration(intervalMinutes) * time.Minute)
-	defer ticker.Stop()
+	// Fetch interval from server and update config if different
+	if resp, err := httpClient.GetUpdateInterval(ctx); err == nil && resp.UpdateInterval > 0 {
+		if resp.UpdateInterval != intervalMinutes {
+			logger.WithFields(map[string]interface{}{
+				"config_interval": intervalMinutes,
+				"server_interval": resp.UpdateInterval,
+			}).Info("Server interval differs from config, updating config.yml")
+
+			if err := cfgManager.SetUpdateInterval(resp.UpdateInterval); err != nil {
+				logger.WithError(err).Warn("Failed to save interval to config.yml")
+			} else {
+				intervalMinutes = resp.UpdateInterval
+				logger.WithField("interval", intervalMinutes).Info("Updated interval in config.yml")
+			}
+		}
+	} else if err != nil {
+		logger.WithError(err).Warn("Failed to fetch interval from server, using config value")
+	}
+
+	// Fetch integration status from server and sync with config.yml
+	logger.Info("Syncing integration status from server...")
+	if integrationResp, err := httpClient.GetIntegrationStatus(ctx); err == nil && integrationResp.Success {
+		configUpdated := false
+		for integrationName, serverEnabled := range integrationResp.Integrations {
+			configEnabled := cfgManager.IsIntegrationEnabled(integrationName)
+			if serverEnabled != configEnabled {
+				logger.WithFields(map[string]interface{}{
+					"integration":  integrationName,
+					"config_value": configEnabled,
+					"server_value": serverEnabled,
+				}).Info("Integration status differs, updating config.yml")
+
+				if err := cfgManager.SetIntegrationEnabled(integrationName, serverEnabled); err != nil {
+					logger.WithError(err).Warn("Failed to save integration status to config.yml")
+				} else {
+					configUpdated = true
+					logger.WithFields(map[string]interface{}{
+						"integration": integrationName,
+						"enabled":     serverEnabled,
+					}).Info("Updated integration status in config.yml")
+				}
+			}
+		}
+
+		if configUpdated {
+			// Reload config so in-memory state matches the updated file
+			if err := cfgManager.LoadConfig(); err != nil {
+				logger.WithError(err).Warn("Failed to reload config after integration update")
+			} else {
+				logger.Info("Config reloaded, integration settings will be applied")
+			}
+		} else {
+			logger.Debug("Integration status matches config, no update needed")
+		}
+	} else if err != nil {
+		logger.WithError(err).Warn("Failed to fetch integration status from server, using config values")
+	}
+
+	// Load or calculate offset based on api_id to stagger reporting times
+	var offset time.Duration
+	configOffsetSeconds := cfgManager.GetConfig().ReportOffset
+
+	// Calculate what the offset should be based on current api_id and interval
+	calculatedOffset := utils.CalculateReportOffset(apiId, intervalMinutes)
+	calculatedOffsetSeconds := int(calculatedOffset.Seconds())
+
+	// Use config offset if it exists and matches calculated value, otherwise recalculate and save
+	if configOffsetSeconds > 0 && configOffsetSeconds == calculatedOffsetSeconds {
+		offset = time.Duration(configOffsetSeconds) * time.Second
+		logger.WithFields(map[string]interface{}{
+			"api_id":           apiId,
+			"interval_minutes": intervalMinutes,
+			"offset_seconds":   offset.Seconds(),
+		}).Info("Loaded report offset from config.yml")
+	} else {
+		// Offset not in config or doesn't match, calculate and save it
+		offset = calculatedOffset
+		if err := cfgManager.SetReportOffset(calculatedOffsetSeconds); err != nil {
+			logger.WithError(err).Warn("Failed to save offset to config.yml")
+		} else {
+			logger.WithFields(map[string]interface{}{
+				"api_id":           apiId,
+				"interval_minutes": intervalMinutes,
+				"offset_seconds":   offset.Seconds(),
+			}).Info("Calculated and saved report offset to config.yml")
+		}
+	}
 
 	// Send startup ping to notify server that agent has started
 	logger.Info("🚀 Agent starting up, notifying server...")
@@ -63,7 +156,7 @@ func runService() error {
 
 	// initial report on boot
 	logger.Info("Sending initial report on startup...")
-	if err := sendReport(); err != nil {
+	if err := sendReport(false); err != nil {
 		logger.WithError(err).Warn("initial report failed")
 	} else {
 		logger.Info("✅ Initial report sent successfully")
@@ -78,22 +171,74 @@ func runService() error {
 	// Start integration monitoring (Docker real-time events, etc.)
 	startIntegrationMonitoring(ctx, dockerEvents)
 
+	// Create ticker with initial interval
+	ticker := time.NewTicker(time.Duration(intervalMinutes) * time.Minute)
+	defer ticker.Stop()
+
+	// Wait for offset before starting periodic reports
+	// This staggers the reporting times across different agents
+	offsetTimer := time.NewTimer(offset)
+	defer offsetTimer.Stop()
+
+	// Track whether offset period has passed
+	offsetPassed := false
+
+	// Track current interval for offset recalculation on updates
+	currentInterval := intervalMinutes
+
 	for {
 		select {
+		case <-offsetTimer.C:
+			// Offset period completed, start consuming from ticker normally
+			offsetPassed = true
+			logger.Debug("Offset period completed, periodic reports will now start")
 		case <-ticker.C:
-			if err := sendReport(); err != nil {
-				logger.WithError(err).Warn("periodic report failed")
+			// Only process ticker events after offset has passed
+			if offsetPassed {
+				if err := sendReport(false); err != nil {
+					logger.WithError(err).Warn("periodic report failed")
+				}
 			}
 		case m := <-messages:
 			switch m.kind {
 			case "settings_update":
-				if m.interval > 0 {
+				if m.interval > 0 && m.interval != currentInterval {
+					// Save new interval to config.yml
+					if err := cfgManager.SetUpdateInterval(m.interval); err != nil {
+						logger.WithError(err).Warn("Failed to save interval to config.yml")
+					} else {
+						logger.WithField("interval", m.interval).Info("Saved new interval to config.yml")
+					}
+
+					// Recalculate offset for new interval and save to config.yml
+					newOffset := utils.CalculateReportOffset(apiId, m.interval)
+					newOffsetSeconds := int(newOffset.Seconds())
+					if err := cfgManager.SetReportOffset(newOffsetSeconds); err != nil {
+						logger.WithError(err).Warn("Failed to save offset to config.yml")
+					}
+
+					logger.WithFields(map[string]interface{}{
+						"old_interval":       currentInterval,
+						"new_interval":       m.interval,
+						"new_offset_seconds": newOffset.Seconds(),
+					}).Info("Recalculated and saved offset for new interval")
+
+					// Stop old ticker
 					ticker.Stop()
+
+					// Create new ticker with updated interval
 					ticker = time.NewTicker(time.Duration(m.interval) * time.Minute)
+					currentInterval = m.interval
+
+					// Reset offset timer for new interval
+					offsetTimer.Stop()
+					offsetTimer = time.NewTimer(newOffset)
+					offsetPassed = false // Reset flag for new interval
+
 					logger.WithField("new_interval", m.interval).Info("interval updated, no report sent")
 				}
 			case "report_now":
-				if err := sendReport(); err != nil {
+				if err := sendReport(false); err != nil {
 					logger.WithError(err).Warn("report_now failed")
 				}
 			case "update_agent":
@@ -352,7 +497,7 @@ func toggleIntegration(integrationName string, enabled bool) error {
 		// Since we're running inside the service, we can't stop ourselves directly
 		// Instead, we'll create a helper script that runs after we exit
 		logger.Debug("Detected OpenRC, scheduling service restart via helper script")
-		
+
 		// Create a helper script that will restart the service after we exit
 		helperScript := `#!/bin/sh
 # Wait a moment for the current process to exit
@@ -385,7 +530,7 @@ rm -f "$0"
 				os.Exit(0)
 			}
 		}
-		
+
 		// Fallback: If helper script approach failed, just exit and let OpenRC handle it
 		// OpenRC with command_background="yes" should restart on exit
 		logger.Info("Exiting to allow OpenRC to restart service with updated config...")

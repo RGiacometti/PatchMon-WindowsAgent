@@ -36,11 +36,13 @@ type ServerVersionResponse struct {
 }
 
 type ServerVersionInfo struct {
-	CurrentVersion         string   `json:"currentVersion"`
-	LatestVersion          string   `json:"latestVersion"`
-	HasUpdate              bool     `json:"hasUpdate"`
-	LastChecked            string   `json:"lastChecked"`
-	SupportedArchitectures []string `json:"supportedArchitectures"`
+	CurrentVersion           string   `json:"currentVersion"`
+	LatestVersion            string   `json:"latestVersion"`
+	HasUpdate                bool     `json:"hasUpdate"`
+	AutoUpdateDisabled       bool     `json:"autoUpdateDisabled"`
+	AutoUpdateDisabledReason string   `json:"autoUpdateDisabledReason"`
+	LastChecked              string   `json:"lastChecked"`
+	SupportedArchitectures   []string `json:"supportedArchitectures"`
 }
 
 // checkVersionCmd represents the check-version command
@@ -87,6 +89,16 @@ func checkVersion() error {
 		fmt.Printf("  Current version: %s\n", currentVersion)
 		fmt.Printf("  Latest version: %s\n", latestVersion)
 		fmt.Printf("\nTo update, run: patchmon-agent update-agent\n")
+	} else if versionInfo.AutoUpdateDisabled && latestVersion != currentVersion {
+		logger.WithFields(map[string]interface{}{
+			"current": currentVersion,
+			"latest":  latestVersion,
+			"reason":  versionInfo.AutoUpdateDisabledReason,
+		}).Info("New update available but auto-update is disabled")
+		fmt.Printf("Current version: %s\n", currentVersion)
+		fmt.Printf("Latest version: %s\n", latestVersion)
+		fmt.Printf("Status: %s\n", versionInfo.AutoUpdateDisabledReason)
+		fmt.Printf("\nTo update manually, run: patchmon-agent update-agent\n")
 	} else {
 		logger.WithField("version", currentVersion).Info("Agent is up to date")
 		fmt.Printf("Agent is up to date (version %s)\n", currentVersion)
@@ -594,56 +606,64 @@ func restartService(executablePath, expectedVersion string) error {
 	// Detect init system and use appropriate restart command
 	if _, err := exec.LookPath("systemctl"); err == nil {
 		// Systemd is available
-		logger.Debug("Detected systemd, using systemctl stop+start")
+		// Since we're running inside the service, we can't stop ourselves directly
+		// Instead, we'll create a helper script that runs after we exit
+		logger.Debug("Detected systemd, scheduling service restart via helper script")
 
-		// First, stop the service (this will send SIGTERM to current process)
-		// We use stop+start instead of restart to ensure clean shutdown
-		logger.Debug("Stopping patchmon-agent service...")
-		stopCmd := exec.CommandContext(ctx, "systemctl", "stop", "patchmon-agent")
-		stopOutput, err := stopCmd.CombinedOutput()
-		if err != nil {
-			logger.WithError(err).WithField("output", string(stopOutput)).Warn("Failed to stop service, trying start anyway")
+		// Ensure /etc/patchmon directory exists
+		if err := os.MkdirAll("/etc/patchmon", 0755); err != nil {
+			logger.WithError(err).Warn("Failed to create /etc/patchmon directory, will try anyway")
+		}
+
+		// Create a helper script that will restart the service after we exit
+		helperScript := `#!/bin/sh
+# Wait a moment for the current process to exit
+sleep 2
+# Restart the service using systemctl
+systemctl restart patchmon-agent 2>&1 || systemctl start patchmon-agent 2>&1
+# Clean up this script
+rm -f "$0"
+`
+		helperPath := "/etc/patchmon/patchmon-restart-helper.sh"
+		if err := os.WriteFile(helperPath, []byte(helperScript), 0755); err != nil {
+			logger.WithError(err).Warn("Failed to create restart helper script, will exit and rely on systemd auto-restart")
+			// Fall through to exit approach
 		} else {
-			// Give systemd a moment to stop the service
-			time.Sleep(1 * time.Second)
+			// Execute the helper script in background (detached from current process)
+			// Use 'sh -c' with nohup to ensure it runs after we exit
+			cmd := exec.Command("sh", "-c", fmt.Sprintf("nohup %s > /dev/null 2>&1 &", helperPath))
+			if err := cmd.Start(); err != nil {
+				logger.WithError(err).Warn("Failed to start restart helper script, will exit and rely on systemd auto-restart")
+				// Clean up script
+				if removeErr := os.Remove(helperPath); removeErr != nil {
+					logger.WithError(removeErr).Debug("Failed to remove helper script")
+				}
+				// Fall through to exit approach
+			} else {
+				logger.Info("Scheduled service restart via helper script, exiting now...")
+				// Give the helper script a moment to start
+				time.Sleep(500 * time.Millisecond)
+				// Exit gracefully - the helper script will restart the service
+				os.Exit(0)
+			}
 		}
 
-		// Now start the service (this will use the new binary)
-		logger.Debug("Starting patchmon-agent service...")
-		startCmd := exec.CommandContext(ctx, "systemctl", "start", "patchmon-agent")
-		startOutput, err := startCmd.CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("failed to start service: %w, output: %s", err, string(startOutput))
-		}
-
-		// Verify the service is actually running
-		logger.Debug("Verifying service is running...")
-		// Longer wait for ARM systems which may need more time
-		time.Sleep(3 * time.Second)
-		statusCmd := exec.CommandContext(ctx, "systemctl", "is-active", "patchmon-agent")
-		statusOutput, err := statusCmd.CombinedOutput()
-		if err != nil || strings.TrimSpace(string(statusOutput)) != "active" {
-			return fmt.Errorf("service restart verification failed: status=%s, error=%v", string(statusOutput), err)
-		}
-
-		// Additional verification: Check if the running process is using the new binary
-		// This is critical for ARM systems where restart might not work properly
-		logger.Debug("Verifying running process is using new binary...")
-		time.Sleep(2 * time.Second) // Give process time to fully start
-		if err := verifyRunningBinaryVersion(executablePath, expectedVersion); err != nil {
-			logger.WithError(err).Warn("Could not verify running binary version - service restarted but version check failed")
-			// Don't fail the update, but log the warning
-			// This helps identify cases where restart didn't actually load new binary
-		}
-
-		logger.WithField("output", string(startOutput)).Debug("Service restart command completed")
-		logger.Info("Service restarted successfully - new binary is now active")
+		// Fallback: If helper script approach failed, just exit and let systemd handle it
+		// Systemd with Restart=always should restart on exit
+		logger.Info("Exiting to allow systemd to restart service with new binary...")
+		os.Exit(0)
+		// os.Exit never returns, but we need this for code flow
 		return nil
 	} else if _, err := exec.LookPath("rc-service"); err == nil {
 		// OpenRC is available (Alpine Linux)
 		// Since we're running inside the service, we can't stop ourselves directly
 		// Instead, we'll create a helper script that runs after we exit
 		logger.Debug("Detected OpenRC, scheduling service restart via helper script")
+
+		// Ensure /etc/patchmon directory exists
+		if err := os.MkdirAll("/etc/patchmon", 0755); err != nil {
+			logger.WithError(err).Warn("Failed to create /etc/patchmon directory, will try anyway")
+		}
 
 		// Create a helper script that will restart the service after we exit
 		helperScript := `#!/bin/sh

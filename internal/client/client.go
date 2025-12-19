@@ -179,6 +179,36 @@ func (c *Client) SendDockerData(ctx context.Context, payload *models.DockerPaylo
 	return result, nil
 }
 
+// GetIntegrationStatus gets the current integration status from server
+func (c *Client) GetIntegrationStatus(ctx context.Context) (*models.IntegrationStatusResponse, error) {
+	url := fmt.Sprintf("%s/api/%s/hosts/integrations", c.config.PatchmonServer, c.config.APIVersion)
+
+	c.logger.Debug("Getting integration status from server")
+
+	resp, err := c.client.R().
+		SetContext(ctx).
+		SetHeader("Content-Type", "application/json").
+		SetHeader("X-API-ID", c.credentials.APIID).
+		SetHeader("X-API-KEY", c.credentials.APIKey).
+		SetResult(&models.IntegrationStatusResponse{}).
+		Get(url)
+
+	if err != nil {
+		return nil, fmt.Errorf("integration status request failed: %w", err)
+	}
+
+	if resp.StatusCode() != 200 {
+		return nil, fmt.Errorf("integration status request failed with status %d: %s", resp.StatusCode(), resp.String())
+	}
+
+	result, ok := resp.Result().(*models.IntegrationStatusResponse)
+	if !ok {
+		return nil, fmt.Errorf("invalid response format")
+	}
+
+	return result, nil
+}
+
 // SendDockerStatusEvent sends a real-time Docker container status event via WebSocket
 func (c *Client) SendDockerStatusEvent(event *models.DockerStatusEvent) error {
 	// This will be called by the WebSocket connection in the serve command

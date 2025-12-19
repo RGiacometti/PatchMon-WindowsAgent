@@ -3,10 +3,8 @@
 # Build variables
 BINARY_NAME=patchmon-agent
 BUILD_DIR=build
-# Use hardcoded version instead of git tags
-VERSION=1.3.7
-# Strip debug info and set version variable
-LDFLAGS=-ldflags "-s -w -X patchmon-agent/internal/version.Version=$(VERSION)"
+# Strip debug info (version comes from internal/version/version.go)
+LDFLAGS=-ldflags "-s -w"
 # Disable VCS stamping
 BUILD_FLAGS=-buildvcs=false
 
@@ -14,9 +12,9 @@ BUILD_FLAGS=-buildvcs=false
 GOBASE=$(shell pwd)
 GOBIN=$(GOBASE)/$(BUILD_DIR)
 # Use full path to go binary to avoid PATH issues when running as root
-GO_CMD=/usr/local/go/bin/go
+GO_CMD=/usr/bin/go
 # Use full path to golangci-lint binary to avoid PATH issues when running as root
-GOLANGCI_LINT_CMD=/usr/local/go/bin/golangci-lint
+GOLANGCI_LINT_CMD=/root/go/bin/golangci-lint
 
 # Default target
 .PHONY: all

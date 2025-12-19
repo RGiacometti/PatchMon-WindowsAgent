@@ -53,44 +53,51 @@ type NetworkInfo struct {
 
 // NetworkInterface represents a network interface
 type NetworkInterface struct {
-	Name      string           `json:"name"`
-	Type      string           `json:"type"`
-	Addresses []NetworkAddress `json:"addresses"`
+	Name       string           `json:"name"`
+	Type       string           `json:"type"`
+	MACAddress string           `json:"macAddress,omitempty"`
+	MTU        int              `json:"mtu,omitempty"`
+	Status     string           `json:"status,omitempty"`    // "up" or "down"
+	LinkSpeed  int              `json:"linkSpeed,omitempty"` // Speed in Mbps, -1 if unknown
+	Duplex     string           `json:"duplex,omitempty"`    // "full", "half", or ""
+	Addresses  []NetworkAddress `json:"addresses"`
 }
 
 // NetworkAddress represents an IP address
 type NetworkAddress struct {
 	Address string `json:"address"`
-	Family  string `json:"family"`
+	Family  string `json:"family"`            // "inet" or "inet6"
+	Netmask string `json:"netmask,omitempty"` // CIDR notation (e.g., "/24" or "/64")
+	Gateway string `json:"gateway,omitempty"` // Gateway for this specific address/interface
 }
 
 // ReportPayload represents the data sent to the server
 type ReportPayload struct {
-	Packages          []Package          `json:"packages"`
-	Repositories      []Repository       `json:"repositories"`
-	OSType            string             `json:"osType"`
-	OSVersion         string             `json:"osVersion"`
-	Hostname          string             `json:"hostname"`
-	IP                string             `json:"ip"`
-	Architecture      string             `json:"architecture"`
-	AgentVersion      string             `json:"agentVersion"`
-	MachineID             string             `json:"machineId"`
-	KernelVersion         string             `json:"kernelVersion"`
+	Packages               []Package          `json:"packages"`
+	Repositories           []Repository       `json:"repositories"`
+	OSType                 string             `json:"osType"`
+	OSVersion              string             `json:"osVersion"`
+	Hostname               string             `json:"hostname"`
+	IP                     string             `json:"ip"`
+	Architecture           string             `json:"architecture"`
+	AgentVersion           string             `json:"agentVersion"`
+	MachineID              string             `json:"machineId"`
+	KernelVersion          string             `json:"kernelVersion"`
 	InstalledKernelVersion string             `json:"installedKernelVersion,omitempty"`
-	SELinuxStatus         string             `json:"selinuxStatus"`
-	SystemUptime      string             `json:"systemUptime"`
-	LoadAverage       []float64          `json:"loadAverage"`
-	CPUModel          string             `json:"cpuModel"`
-	CPUCores          int                `json:"cpuCores"`
-	RAMInstalled      float64            `json:"ramInstalled"`
-	SwapSize          float64            `json:"swapSize"`
-	DiskDetails       []DiskInfo         `json:"diskDetails"`
-	GatewayIP         string             `json:"gatewayIp"`
-	DNSServers        []string           `json:"dnsServers"`
-	NetworkInterfaces []NetworkInterface `json:"networkInterfaces"`
-	ExecutionTime     float64            `json:"executionTime"` // Collection time in seconds
-	NeedsReboot       bool               `json:"needsReboot"`
-	RebootReason      string             `json:"rebootReason,omitempty"`
+	SELinuxStatus          string             `json:"selinuxStatus"`
+	SystemUptime           string             `json:"systemUptime"`
+	LoadAverage            []float64          `json:"loadAverage"`
+	CPUModel               string             `json:"cpuModel"`
+	CPUCores               int                `json:"cpuCores"`
+	RAMInstalled           float64            `json:"ramInstalled"`
+	SwapSize               float64            `json:"swapSize"`
+	DiskDetails            []DiskInfo         `json:"diskDetails"`
+	GatewayIP              string             `json:"gatewayIp"`
+	DNSServers             []string           `json:"dnsServers"`
+	NetworkInterfaces      []NetworkInterface `json:"networkInterfaces"`
+	ExecutionTime          float64            `json:"executionTime"` // Collection time in seconds
+	NeedsReboot            bool               `json:"needsReboot"`
+	RebootReason           string             `json:"rebootReason,omitempty"`
 }
 
 // PingResponse represents server ping response
@@ -98,14 +105,7 @@ type PingResponse struct {
 	Message       string             `json:"message"`
 	Timestamp     string             `json:"timestamp"`
 	FriendlyName  string             `json:"friendlyName"`
-	AgentStartup  bool               `json:"agentStartup,omitempty"`
-	Integrations  *IntegrationsState  `json:"integrations,omitempty"`
 	CrontabUpdate *CrontabUpdateInfo `json:"crontabUpdate,omitempty"`
-}
-
-// IntegrationsState represents integration enabled states from server
-type IntegrationsState struct {
-	Docker bool `json:"docker"`
 }
 
 // UpdateResponse represents server update response
@@ -158,6 +158,12 @@ type HostSettingsResponse struct {
 	HostAutoUpdate bool `json:"host_auto_update"`
 }
 
+// IntegrationStatusResponse represents integration status response from server
+type IntegrationStatusResponse struct {
+	Success      bool            `json:"success"`
+	Integrations map[string]bool `json:"integrations"`
+}
+
 // Credentials holds API authentication information
 type Credentials struct {
 	APIID  string `yaml:"api_id" mapstructure:"api_id"`
@@ -166,11 +172,13 @@ type Credentials struct {
 
 // Config represents agent configuration
 type Config struct {
-	PatchmonServer  string            `yaml:"patchmon_server" mapstructure:"patchmon_server"`
-	APIVersion      string            `yaml:"api_version" mapstructure:"api_version"`
-	CredentialsFile string            `yaml:"credentials_file" mapstructure:"credentials_file"`
-	LogFile         string            `yaml:"log_file" mapstructure:"log_file"`
-	LogLevel        string            `yaml:"log_level" mapstructure:"log_level"`
-	SkipSSLVerify   bool              `yaml:"skip_ssl_verify" mapstructure:"skip_ssl_verify"`
-	Integrations    map[string]bool   `yaml:"integrations" mapstructure:"integrations"`
+	PatchmonServer  string          `yaml:"patchmon_server" mapstructure:"patchmon_server"`
+	APIVersion      string          `yaml:"api_version" mapstructure:"api_version"`
+	CredentialsFile string          `yaml:"credentials_file" mapstructure:"credentials_file"`
+	LogFile         string          `yaml:"log_file" mapstructure:"log_file"`
+	LogLevel        string          `yaml:"log_level" mapstructure:"log_level"`
+	SkipSSLVerify   bool            `yaml:"skip_ssl_verify" mapstructure:"skip_ssl_verify"`
+	UpdateInterval  int             `yaml:"update_interval" mapstructure:"update_interval"` // Interval in minutes
+	ReportOffset    int             `yaml:"report_offset" mapstructure:"report_offset"`     // Offset in seconds
+	Integrations    map[string]bool `yaml:"integrations" mapstructure:"integrations"`
 }

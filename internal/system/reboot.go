@@ -1,6 +1,7 @@
 package system
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"sort"
@@ -11,32 +12,40 @@ import (
 // CheckRebootRequired checks if the system requires a reboot
 // Returns (needsReboot bool, reason string)
 func (d *Detector) CheckRebootRequired() (bool, string) {
+	runningKernel := d.getRunningKernel()
+	latestKernel := d.getLatestInstalledKernel()
+
 	// Check Debian/Ubuntu - reboot-required flag file
 	if _, err := os.Stat("/var/run/reboot-required"); err == nil {
 		d.logger.Debug("Reboot required: /var/run/reboot-required file exists")
-		return true, "Reboot flag file exists"
+		reason := "Reboot flag file exists (/var/run/reboot-required)"
+		if runningKernel != latestKernel && latestKernel != "" {
+			reason += fmt.Sprintf(" | Running kernel: %s, Installed kernel: %s", runningKernel, latestKernel)
+		}
+		return true, reason
 	}
 
 	// Check RHEL/Fedora - needs-restarting utility
 	if needsRestart, reason := d.checkNeedsRestarting(); needsRestart {
 		d.logger.WithField("reason", reason).Debug("Reboot required: needs-restarting check")
+		if runningKernel != latestKernel && latestKernel != "" {
+			reason += fmt.Sprintf(" | Running kernel: %s, Installed kernel: %s", runningKernel, latestKernel)
+		}
 		return true, reason
 	}
 
 	// Universal kernel check - compare running vs latest installed
-	runningKernel := d.getRunningKernel()
-	latestKernel := d.getLatestInstalledKernel()
-
 	if runningKernel != latestKernel && latestKernel != "" {
 		d.logger.WithFields(map[string]interface{}{
 			"running": runningKernel,
 			"latest":  latestKernel,
 		}).Debug("Reboot required: kernel version mismatch")
-		return true, "Kernel version mismatch"
+		reason := fmt.Sprintf("Kernel version mismatch | Running kernel: %s, Installed kernel: %s", runningKernel, latestKernel)
+		return true, reason
 	}
 
 	d.logger.Debug("No reboot required")
-	return false, "No reboot required"
+	return false, ""
 }
 
 // checkNeedsRestarting checks using needs-restarting command (RHEL/Fedora)

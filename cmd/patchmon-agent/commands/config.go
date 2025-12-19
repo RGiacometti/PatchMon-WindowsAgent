@@ -128,7 +128,7 @@ func configureCreds(apiID, apiKey, serverURL string) error {
 
 	// Test credentials
 	logger.Info("Testing connection...")
-	pingResp, err := pingServer()
+	_, err := pingServer()
 	if err != nil {
 		logger.WithError(err).Error("Connection test failed")
 		return err
@@ -136,20 +136,6 @@ func configureCreds(apiID, apiKey, serverURL string) error {
 
 	logger.Info("✅ Connectivity test successful")
 	logger.Info("✅ API credentials are valid")
-
-	// Sync integration states from server to config.yml
-	// This ensures agent's config.yml matches the persisted state in PatchMon database
-	if pingResp.Integrations != nil {
-		logger.Info("Syncing integration states from server...")
-		
-		// Set Docker integration state if provided
-		if err := cfgManager.SetIntegrationEnabled("docker", pingResp.Integrations.Docker); err != nil {
-			logger.WithError(err).Warn("Failed to set Docker integration state in config")
-			// Don't fail the entire setup if integration sync fails
-		} else {
-			logger.WithField("docker_enabled", pingResp.Integrations.Docker).Info("✅ Docker integration state synced to config.yml")
-		}
-	}
 
 	return nil
 }

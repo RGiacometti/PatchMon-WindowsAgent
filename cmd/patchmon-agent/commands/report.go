@@ -2,7 +2,9 @@ package commands
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
 	"time"
 
 	"patchmon-agent/internal/client"
@@ -20,6 +22,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var reportJson bool
+
 // reportCmd represents the report command
 var reportCmd = &cobra.Command{
 	Use:   "report",
@@ -30,20 +34,26 @@ var reportCmd = &cobra.Command{
 			return err
 		}
 
-		return sendReport()
+		return sendReport(reportJson)
 	},
 }
 
-func sendReport() error {
+func init() {
+	reportCmd.Flags().BoolVar(&reportJson, "json", false, "Output the JSON report payload to stdout instead of sending to server")
+}
+
+func sendReport(outputJson bool) error {
 	// Start tracking execution time
 	startTime := time.Now()
 	logger.Debug("Starting report process")
 
-	// Load API credentials to send report
-	logger.Debug("Loading API credentials")
-	if err := cfgManager.LoadCredentials(); err != nil {
-		logger.WithError(err).Debug("Failed to load credentials")
-		return err
+	// Load API credentials only if we're sending the report (not just outputting JSON)
+	if !outputJson {
+		logger.Debug("Loading API credentials")
+		if err := cfgManager.LoadCredentials(); err != nil {
+			logger.WithError(err).Debug("Failed to load credentials")
+			return err
+		}
 	}
 
 	// Initialise managers
@@ -189,6 +199,16 @@ func sendReport() error {
 		RebootReason:      rebootReason,
 	}
 
+	// If --report-json flag is set, output JSON and exit
+	if outputJson {
+		jsonData, err := json.MarshalIndent(payload, "", "  ")
+		if err != nil {
+			return fmt.Errorf("failed to marshal JSON: %w", err)
+		}
+		fmt.Fprintf(os.Stdout, "%s\n", jsonData)
+		return nil
+	}
+
 	// Send report
 	logger.Info("Sending report to PatchMon server...")
 	httpClient := client.New(cfgManager, logger)
@@ -244,6 +264,13 @@ func sendReport() error {
 					logger.Info("PatchMon agent update completed successfully")
 					// updateAgent() will exit after restart, so this won't be reached
 				}
+			} else if versionInfo.AutoUpdateDisabled && versionInfo.LatestVersion != versionInfo.CurrentVersion {
+				// Update is available but auto-update is disabled
+				logger.WithFields(logrus.Fields{
+					"current": versionInfo.CurrentVersion,
+					"latest":  versionInfo.LatestVersion,
+					"reason":  versionInfo.AutoUpdateDisabledReason,
+				}).Info("New update available but auto-update is disabled")
 			} else {
 				logger.WithField("version", versionInfo.CurrentVersion).Info("Agent is up to date")
 			}
