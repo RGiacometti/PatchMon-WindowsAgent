@@ -3,6 +3,7 @@ package models
 // Package represents a software package
 type Package struct {
 	Name             string `json:"name"`
+	Description      string `json:"description,omitempty"`
 	CurrentVersion   string `json:"currentVersion"`
 	AvailableVersion string `json:"availableVersion,omitempty"`
 	NeedsUpdate      bool   `json:"needsUpdate"`
