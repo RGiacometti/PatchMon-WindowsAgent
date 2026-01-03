@@ -17,32 +17,48 @@ func TestAPTManager_parseInstalledPackages(t *testing.T) {
 	tests := []struct {
 		name     string
 		input    string
-		expected map[string]string
+		expected map[string]models.Package
 	}{
 		{
 			name: "valid single package",
-			input: `vim 2:8.2.3995-1ubuntu2.17
+			input: `vim 2:8.2.3995-1ubuntu2.17 Vi IMproved - enhanced vi editor
 `,
-			expected: map[string]string{
-				"vim": "2:8.2.3995-1ubuntu2.17",
+			expected: map[string]models.Package{
+				"vim": {
+					Name:           "vim",
+					CurrentVersion: "2:8.2.3995-1ubuntu2.17",
+					Description:    "Vi IMproved - enhanced vi editor",
+				},
 			},
 		},
 		{
 			name: "multiple packages",
-			input: `vim 2:8.2.3995-1ubuntu2.17
-libc6 2.35-0ubuntu3.8
-bash 5.1-6ubuntu1.1
+			input: `vim 2:8.2.3995-1ubuntu2.17 Vi IMproved
+libc6 2.35-0ubuntu3.8 GNU C Library
+bash 5.1-6ubuntu1.1 GNU Bourne Again SHell
 `,
-			expected: map[string]string{
-				"vim":   "2:8.2.3995-1ubuntu2.17",
-				"libc6": "2.35-0ubuntu3.8",
-				"bash":  "5.1-6ubuntu1.1",
+			expected: map[string]models.Package{
+				"vim": {
+					Name:           "vim",
+					CurrentVersion: "2:8.2.3995-1ubuntu2.17",
+					Description:    "Vi IMproved",
+				},
+				"libc6": {
+					Name:           "libc6",
+					CurrentVersion: "2.35-0ubuntu3.8",
+					Description:    "GNU C Library",
+				},
+				"bash": {
+					Name:           "bash",
+					CurrentVersion: "5.1-6ubuntu1.1",
+					Description:    "GNU Bourne Again SHell",
+				},
 			},
 		},
 		{
 			name:     "empty input",
 			input:    "",
-			expected: map[string]string{},
+			expected: map[string]models.Package{},
 		},
 	}
 

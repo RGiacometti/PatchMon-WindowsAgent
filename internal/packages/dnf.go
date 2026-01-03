@@ -50,15 +50,15 @@ func (m *DNFManager) GetPackages() []models.Package {
 	// Get installed packages
 	m.logger.Debug("Getting installed packages...")
 	listCmd := exec.Command(packageManager, "list", "--installed")
-	listOutput, err := listCmd.Output()
-	var installedPackages map[string]string
+	installedOutput, err := listCmd.Output()
+	var installedPackages map[string]models.Package
 	if err != nil {
-		m.logger.WithError(err).Error("Failed to get installed packages - this will result in 0 packages being reported")
-		installedPackages = make(map[string]string)
+		m.logger.WithError(err).Warn("Failed to get installed packages")
+		installedPackages = make(map[string]models.Package)
 	} else {
-		m.logger.WithField("outputSize", len(listOutput)).Debug("Received output from list installed command")
+		m.logger.WithField("outputSize", len(installedOutput)).Debug("Received output from list installed command")
 		m.logger.Debug("Parsing installed packages...")
-		installedPackages = m.parseInstalledPackages(string(listOutput))
+		installedPackages = m.parseInstalledPackages(string(installedOutput))
 		m.logger.WithField("count", len(installedPackages)).Info("Found installed packages")
 
 		if len(installedPackages) == 0 {
@@ -205,7 +205,7 @@ func (m *DNFManager) extractBasePackageName(packageString string) string {
 }
 
 // parseUpgradablePackages parses dnf/yum check-update output
-func (m *DNFManager) parseUpgradablePackages(output string, packageManager string, installedPackages map[string]string, securityPackages map[string]bool) []models.Package {
+func (m *DNFManager) parseUpgradablePackages(output string, packageManager string, installedPackages map[string]models.Package, securityPackages map[string]bool) []models.Package {
 	var packages []models.Package
 
 	scanner := bufio.NewScanner(strings.NewReader(output))
@@ -228,7 +228,10 @@ func (m *DNFManager) parseUpgradablePackages(output string, packageManager strin
 
 		// Get current version from installed packages map (already collected)
 		// Try exact match first
-		currentVersion := installedPackages[packageName]
+		var currentVersion string
+		if p, ok := installedPackages[packageName]; ok {
+			currentVersion = p.CurrentVersion
+		}
 
 		// If not found, try to find by base name (handles architecture suffixes)
 		// e.g., if packageName is "package" but installed has "package.x86_64"
@@ -241,13 +244,15 @@ func (m *DNFManager) parseUpgradablePackages(output string, packageManager strin
 				if archSuffix == "x86_64" || archSuffix == "i686" || archSuffix == "i386" ||
 					archSuffix == "noarch" || archSuffix == "aarch64" || archSuffix == "arm64" {
 					basePackageName = packageName[:idx]
-					currentVersion = installedPackages[basePackageName]
+					if p, ok := installedPackages[basePackageName]; ok {
+						currentVersion = p.CurrentVersion
+					}
 				}
 			}
 
 			// If still not found, search through installed packages for matching base name
 			if currentVersion == "" {
-				for installedName, version := range installedPackages {
+				for installedName, p := range installedPackages {
 					// Remove architecture suffix if present (e.g., .x86_64, .noarch, .i686)
 					baseName := installedName
 					if idx := strings.LastIndex(installedName, "."); idx > 0 {
@@ -261,7 +266,7 @@ func (m *DNFManager) parseUpgradablePackages(output string, packageManager strin
 
 					// Compare base names (handles both cases: package vs package.x86_64)
 					if baseName == basePackageName || baseName == packageName {
-						currentVersion = version
+						currentVersion = p.CurrentVersion
 						break
 					}
 				}
@@ -273,7 +278,7 @@ func (m *DNFManager) parseUpgradablePackages(output string, packageManager strin
 			getCurrentCmd := exec.Command(packageManager, "list", "--installed", packageName)
 			getCurrentOutput, err := getCurrentCmd.Output()
 			if err == nil {
-				for currentLine := range strings.SplitSeq(string(getCurrentOutput), "\n") {
+				for _, currentLine := range strings.Split(string(getCurrentOutput), "\n") {
 					if strings.Contains(currentLine, packageName) && !strings.Contains(currentLine, "Installed") && !strings.Contains(currentLine, "Available") {
 						currentFields := slices.Collect(strings.FieldsSeq(currentLine))
 						if len(currentFields) >= 2 {
@@ -311,28 +316,30 @@ func (m *DNFManager) parseUpgradablePackages(output string, packageManager strin
 	return packages
 }
 
-// parseInstalledPackages parses dnf/yum list installed output and returns a map of package name to version
-func (m *DNFManager) parseInstalledPackages(output string) map[string]string {
-	installedPackages := make(map[string]string)
+// parseInstalledPackages parses dnf list installed output
+func (m *DNFManager) parseInstalledPackages(output string) map[string]models.Package {
+	installedPackages := make(map[string]models.Package)
 
 	scanner := bufio.NewScanner(strings.NewReader(output))
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
-
-		// Skip header lines and empty lines
-		if line == "" || strings.Contains(line, "Loaded plugins") ||
-			strings.Contains(line, "Installed Packages") {
+		if line == "" || strings.HasPrefix(line, "Installed Packages") {
 			continue
 		}
 
-		fields := slices.Collect(strings.FieldsSeq(line))
-		if len(fields) < 2 {
+		parts := strings.Fields(line)
+		if len(parts) < 3 {
 			continue
 		}
 
-		packageName := fields[0]
-		version := fields[1]
-		installedPackages[packageName] = version
+		packageName := strings.Split(parts[0], ".")[0] // Remove architecture
+		version := parts[1]
+
+		installedPackages[packageName] = models.Package{
+			Name:           packageName,
+			CurrentVersion: version,
+			NeedsUpdate:    false,
+		}
 	}
 
 	return installedPackages

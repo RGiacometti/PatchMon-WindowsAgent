@@ -1,6 +1,7 @@
 package packages
 
 import (
+	"patchmon-agent/pkg/models"
 	"testing"
 
 	"github.com/sirupsen/logrus"
@@ -15,22 +16,30 @@ func TestDNFManager_parseInstalledPackages(t *testing.T) {
 	tests := []struct {
 		name     string
 		input    string
-		expected map[string]string
+		expected map[string]models.Package
 	}{
 		{
 			name: "valid packages",
 			input: `Installed Packages
 vim-enhanced.x86_64                  2:8.2.2637-20.el9_1                  @baseos
 bash.x86_64                          5.1.8-6.el9_1                        @baseos`,
-			expected: map[string]string{
-				"vim-enhanced.x86_64": "2:8.2.2637-20.el9_1",
-				"bash.x86_64":         "5.1.8-6.el9_1",
+			expected: map[string]models.Package{
+				"vim-enhanced": {
+					Name:           "vim-enhanced",
+					CurrentVersion: "2:8.2.2637-20.el9_1",
+					NeedsUpdate:    false,
+				},
+				"bash": {
+					Name:           "bash",
+					CurrentVersion: "5.1.8-6.el9_1",
+					NeedsUpdate:    false,
+				},
 			},
 		},
 		{
 			name:     "empty input",
 			input:    "",
-			expected: map[string]string{},
+			expected: map[string]models.Package{},
 		},
 	}
 
@@ -48,22 +57,28 @@ func TestDNFManager_parseUpgradablePackages(t *testing.T) {
 	manager := NewDNFManager(logger)
 
 	tests := []struct {
-		name             string
-		input            string
-		pkgMgr           string
-		installedPackages map[string]string
-		securityPackages map[string]bool
-		expected         int
-		expectedSecurity int
+		name              string
+		input             string
+		pkgMgr            string
+		installedPackages map[string]models.Package
+		securityPackages  map[string]bool
+		expected          int
+		expectedSecurity  int
 	}{
 		{
 			name: "upgradable packages",
 			input: `kernel.x86_64                     5.14.0-284.30.1.el9_2           baseos
 systemd.x86_64                    252-14.el9_2.2                  baseos`,
 			pkgMgr: "dnf",
-			installedPackages: map[string]string{
-				"kernel.x86_64":  "5.14.0-284.30.1.el9_1",
-				"systemd.x86_64": "252-14.el9_2.1",
+			installedPackages: map[string]models.Package{
+				"kernel.x86_64": {
+					Name:           "kernel.x86_64",
+					CurrentVersion: "5.14.0-284.30.1.el9_1",
+				},
+				"systemd.x86_64": {
+					Name:           "systemd.x86_64",
+					CurrentVersion: "252-14.el9_2.1",
+				},
 			},
 			securityPackages: map[string]bool{
 				"kernel": true,

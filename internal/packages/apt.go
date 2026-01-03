@@ -48,12 +48,13 @@ func (m *APTManager) GetPackages() []models.Package {
 
 	// Get installed packages
 	m.logger.Debug("Getting installed packages...")
-	installedCmd := exec.Command("dpkg-query", "-W", "-f", "${Package} ${Version}\n")
+	// Note: Description can be multiline. Multiline descriptions in debian packages usually have subsequent lines indented.
+	installedCmd := exec.Command("dpkg-query", "-W", "-f", "${Package} ${Version} ${Description}\n")
 	installedOutput, err := installedCmd.Output()
-	var installedPackages map[string]string
+	var installedPackages map[string]models.Package
 	if err != nil {
 		m.logger.WithError(err).Warn("Failed to get installed packages")
-		installedPackages = make(map[string]string)
+		installedPackages = make(map[string]models.Package)
 	} else {
 		m.logger.Debug("Parsing installed packages...")
 		installedPackages = m.parseInstalledPackages(string(installedOutput))
@@ -152,25 +153,53 @@ func (m *APTManager) parseAPTUpgrade(output string) []models.Package {
 }
 
 // parseInstalledPackages parses dpkg-query output and returns a map of package name to version
-func (m *APTManager) parseInstalledPackages(output string) map[string]string {
-	installedPackages := make(map[string]string)
+func (m *APTManager) parseInstalledPackages(output string) map[string]models.Package {
+	installedPackages := make(map[string]models.Package)
 
 	scanner := bufio.NewScanner(strings.NewReader(output))
+	var currentPkg *models.Package
+
 	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
+		line := scanner.Text() // Preserve whitespace for description continuation detection
+		trimmedLine := strings.TrimSpace(line)
+		if trimmedLine == "" {
 			continue
 		}
 
-		parts := strings.SplitN(line, " ", 2)
-		if len(parts) != 2 {
+		// Check if this line is a continuation of the description (starts with space)
+		if strings.HasPrefix(line, " ") && currentPkg != nil {
+			// It's a description continuation
+			// For now, we can append it or just skip if we only want the summary.
+			// Let's append it to have full description, joining with newline
+			currentPkg.Description += "\n" + trimmedLine
+			installedPackages[currentPkg.Name] = *currentPkg // Update map
+			continue
+		}
+
+		// New package line: Package Version Description
+		// We use SplitN with 3 parts. Description is the rest.
+		parts := strings.SplitN(trimmedLine, " ", 3)
+		if len(parts) < 2 {
 			m.logger.WithField("line", line).Debug("Skipping malformed installed package line")
+			currentPkg = nil
 			continue
 		}
 
 		packageName := parts[0]
 		version := parts[1]
-		installedPackages[packageName] = version
+		description := ""
+		if len(parts) == 3 {
+			description = parts[2]
+		}
+
+		pkg := models.Package{
+			Name:           packageName,
+			CurrentVersion: version,
+			Description:    description,
+			NeedsUpdate:    false,
+		}
+		installedPackages[packageName] = pkg
+		currentPkg = &pkg
 	}
 
 	return installedPackages

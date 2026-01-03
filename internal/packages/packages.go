@@ -76,22 +76,28 @@ func (m *Manager) detectPackageManager() string {
 }
 
 // CombinePackageData combines and deduplicates installed and upgradable package lists
-func CombinePackageData(installedPackages map[string]string, upgradablePackages []models.Package) []models.Package {
+func CombinePackageData(installedPackages map[string]models.Package, upgradablePackages []models.Package) []models.Package {
 	packages := make([]models.Package, 0)
 	upgradableMap := make(map[string]bool)
 
 	// First, add all upgradable packages
 	for _, pkg := range upgradablePackages {
+		// Preserve description from installed packages if available and not present in upgradable
+		if installedPkg, exists := installedPackages[pkg.Name]; exists {
+			if pkg.Description == "" {
+				pkg.Description = installedPkg.Description
+			}
+		}
 		packages = append(packages, pkg)
 		upgradableMap[pkg.Name] = true
 	}
 
 	// Then add installed packages that are not upgradable
-	for packageName, version := range installedPackages {
+	for packageName, pkg := range installedPackages {
 		if !upgradableMap[packageName] {
 			packages = append(packages, models.Package{
-				Name:             packageName,
-				CurrentVersion:   version,
+				Name:             pkg.Name,
+				CurrentVersion:   pkg.CurrentVersion,
 				NeedsUpdate:      false,
 				IsSecurityUpdate: false,
 			})

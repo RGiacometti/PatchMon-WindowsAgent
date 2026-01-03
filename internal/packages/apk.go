@@ -36,10 +36,10 @@ func (m *APKManager) GetPackages() []models.Package {
 	m.logger.Debug("Getting installed packages...")
 	installedCmd := exec.Command("apk", "list", "--installed")
 	installedOutput, err := installedCmd.Output()
-	var installedPackages map[string]string
+	var installedPackages map[string]models.Package
 	if err != nil {
 		m.logger.WithError(err).Warn("Failed to get installed packages")
-		installedPackages = make(map[string]string)
+		installedPackages = make(map[string]models.Package)
 	} else {
 		m.logger.Debug("Parsing installed packages...")
 		installedPackages = m.parseInstalledPackages(string(installedOutput))
@@ -69,9 +69,9 @@ func (m *APKManager) GetPackages() []models.Package {
 
 // parseInstalledPackages parses apk list --installed output
 // Format: package-name-version-release arch {origin} (license) [installed]
-// Example: alpine-base-3.22.2-r0 x86_64 {alpine-base} (MIT) [installed]
-func (m *APKManager) parseInstalledPackages(output string) map[string]string {
-	installedPackages := make(map[string]string)
+// Example: alpine-base-3.22.2-r0 x86_64// parseInstalledPackages parses apk info -v output
+func (m *APKManager) parseInstalledPackages(output string) map[string]models.Package {
+	installedPackages := make(map[string]models.Package)
 
 	scanner := bufio.NewScanner(strings.NewReader(output))
 	for scanner.Scan() {
@@ -97,15 +97,17 @@ func (m *APKManager) parseInstalledPackages(output string) map[string]string {
 		packageWithVersion := fields[0]
 
 		// Extract package name and version-release
-		// Format: package-name-version-release
-		// We need to find where the version starts (first dash followed by a digit)
 		packageName, version := m.extractPackageNameAndVersion(packageWithVersion)
 		if packageName == "" || version == "" {
 			m.logger.WithField("line", line).Debug("Failed to extract package name or version")
 			continue
 		}
 
-		installedPackages[packageName] = version
+		installedPackages[packageName] = models.Package{
+			Name:           packageName,
+			CurrentVersion: version,
+			NeedsUpdate:    false,
+		}
 	}
 
 	return installedPackages
@@ -114,7 +116,7 @@ func (m *APKManager) parseInstalledPackages(output string) map[string]string {
 // parseUpgradablePackages parses apk -u list output
 // Format: package-name-new-version arch {origin} (license) [upgradable from: package-name-old-version]
 // Example: alpine-conf-3.20.0-r1 x86_64 {alpine-conf} (MIT) [upgradable from: alpine-conf-3.20.0-r0]
-func (m *APKManager) parseUpgradablePackages(output string, installedPackages map[string]string) []models.Package {
+func (m *APKManager) parseUpgradablePackages(output string, installedPackages map[string]models.Package) []models.Package {
 	var packages []models.Package
 
 	// Regex to match the upgradable from pattern
@@ -167,8 +169,8 @@ func (m *APKManager) parseUpgradablePackages(output string, installedPackages ma
 
 		// Use the current version from installed packages if available, otherwise use old version
 		currentVersion := oldVersion
-		if installedVersion, found := installedPackages[newPackageName]; found {
-			currentVersion = installedVersion
+		if installedPkg, found := installedPackages[newPackageName]; found {
+			currentVersion = installedPkg.CurrentVersion
 		}
 
 		// Alpine doesn't have built-in security update tracking
@@ -211,4 +213,3 @@ func (m *APKManager) extractPackageNameAndVersion(packageWithVersion string) (pa
 	packageName = packageWithVersion
 	return
 }
-
