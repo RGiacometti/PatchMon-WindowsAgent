@@ -82,11 +82,13 @@ type Package struct {
 
 // Repository holds information about a package repository/update source
 type Repository struct {
-	Name      string `json:"name"`
-	URL       string `json:"url"`
-	RepoType  string `json:"repoType"`
-	IsEnabled bool   `json:"isEnabled"`
-	IsSecure  bool   `json:"isSecure"`
+	Name         string `json:"name"`
+	URL          string `json:"url"`
+	Distribution string `json:"distribution"`
+	Components   string `json:"components"`
+	RepoType     string `json:"repoType"`
+	IsEnabled    bool   `json:"isEnabled"`
+	IsSecure     bool   `json:"isSecure"`
 }
 
 // ReportPayload is the full payload sent to the PatchMon server

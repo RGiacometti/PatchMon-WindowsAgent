@@ -77,7 +77,7 @@ func TestGetSources_AlwaysReturnsAtLeastOne(t *testing.T) {
 		t.Fatal("GetSources returned empty slice, expected at least one repository")
 	}
 
-	// Verify all repos have the correct type
+	// Verify all repos have the correct type and required fields
 	for _, repo := range repos {
 		if repo.RepoType != constants.RepoTypeWindowsUpdate {
 			t.Errorf("Repository %q has type %q, expected %q", repo.Name, repo.RepoType, constants.RepoTypeWindowsUpdate)
@@ -87,6 +87,12 @@ func TestGetSources_AlwaysReturnsAtLeastOne(t *testing.T) {
 		}
 		if repo.URL == "" {
 			t.Error("Found repository with empty URL")
+		}
+		if repo.Distribution == "" {
+			t.Errorf("Repository %q has empty Distribution (required by PatchMon server)", repo.Name)
+		}
+		if repo.Components == "" {
+			t.Errorf("Repository %q has empty Components (required by PatchMon server)", repo.Name)
 		}
 		if !repo.IsEnabled {
 			t.Errorf("Repository %q is not enabled", repo.Name)

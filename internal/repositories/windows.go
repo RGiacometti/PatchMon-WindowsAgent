@@ -29,11 +29,13 @@ func (w *WindowsUpdateSourceManager) GetSources() ([]models.Repository, error) {
 	if wsusServer != "" {
 		w.logger.Debugf("WSUS server detected: %s", wsusServer)
 		repos = append(repos, models.Repository{
-			Name:      "WSUS",
-			URL:       wsusServer,
-			RepoType:  constants.RepoTypeWindowsUpdate,
-			IsEnabled: true,
-			IsSecure:  strings.HasPrefix(wsusServer, "https://"),
+			Name:         "WSUS",
+			URL:          wsusServer,
+			Distribution: "windows",
+			Components:   "main",
+			RepoType:     constants.RepoTypeWindowsUpdate,
+			IsEnabled:    true,
+			IsSecure:     strings.HasPrefix(wsusServer, "https://"),
 		})
 	}
 
@@ -41,20 +43,24 @@ func (w *WindowsUpdateSourceManager) GetSources() ([]models.Repository, error) {
 	if w.isMicrosoftUpdateEnabled() {
 		w.logger.Debug("Microsoft Update service is enabled")
 		repos = append(repos, models.Repository{
-			Name:      "Microsoft Update",
-			URL:       "https://update.microsoft.com",
-			RepoType:  constants.RepoTypeWindowsUpdate,
-			IsEnabled: true,
-			IsSecure:  true,
+			Name:         "Microsoft Update",
+			URL:          "https://update.microsoft.com",
+			Distribution: "windows",
+			Components:   "main",
+			RepoType:     constants.RepoTypeWindowsUpdate,
+			IsEnabled:    true,
+			IsSecure:     true,
 		})
 	} else {
 		w.logger.Debug("Using standard Windows Update")
 		repos = append(repos, models.Repository{
-			Name:      "Windows Update",
-			URL:       "https://windowsupdate.microsoft.com",
-			RepoType:  constants.RepoTypeWindowsUpdate,
-			IsEnabled: true,
-			IsSecure:  true,
+			Name:         "Windows Update",
+			URL:          "https://windowsupdate.microsoft.com",
+			Distribution: "windows",
+			Components:   "main",
+			RepoType:     constants.RepoTypeWindowsUpdate,
+			IsEnabled:    true,
+			IsSecure:     true,
 		})
 	}
 

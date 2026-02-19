@@ -155,6 +155,10 @@ func (w *WindowsUpdateManager) parseUpdate(update *ole.IDispatch, criteria strin
 	if isInstalled {
 		pkg.CurrentVersion = version
 	} else {
+		// Available (not-installed) updates: the server requires currentVersion
+		// to be non-empty. Use "not installed" as a placeholder since there is
+		// no prior version on this system.
+		pkg.CurrentVersion = "not installed"
 		pkg.AvailableVersion = version
 	}
 

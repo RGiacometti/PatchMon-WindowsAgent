@@ -175,6 +175,21 @@ make install
 make config-init
 ```
 
+### Building without Make
+
+If `make` is not installed (common on Windows), use Go directly:
+
+```powershell
+# Build
+go build -o build\patchmon-agent.exe ./cmd/patchmon-agent/
+
+# Run tests
+go test -short ./...
+
+# Vet
+go vet ./...
+```
+
 ## Logging
 
 Logs are written to `C:\ProgramData\PatchMon\logs\patchmon-agent.log` with rotation (10 MB max, 5 backups, 14-day retention):
