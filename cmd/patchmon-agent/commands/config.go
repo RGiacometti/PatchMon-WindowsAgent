@@ -37,7 +37,7 @@ Example:
   patchmon-agent config set-api patchmon_1a2b3c4d abcd1234567890abcdef1234567890abcdef1234567890abcdef1234567890 http://patchmon.example.com`,
 	Args: cobra.ExactArgs(3),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if err := checkRoot(); err != nil {
+		if err := checkAdmin(); err != nil {
 			return err
 		}
 

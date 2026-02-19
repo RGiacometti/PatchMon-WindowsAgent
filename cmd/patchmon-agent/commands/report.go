@@ -9,8 +9,6 @@ import (
 
 	"patchmon-agent/internal/client"
 	"patchmon-agent/internal/hardware"
-	"patchmon-agent/internal/integrations"
-	"patchmon-agent/internal/integrations/docker"
 	"patchmon-agent/internal/network"
 	"patchmon-agent/internal/packages"
 	"patchmon-agent/internal/repositories"
@@ -30,7 +28,7 @@ var reportCmd = &cobra.Command{
 	Short: "Report system and package information to server",
 	Long:  "Collect and report system, package, and repository information to the PatchMon server.",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if err := checkRoot(); err != nil {
+		if err := checkAdmin(); err != nil {
 			return err
 		}
 
@@ -102,10 +100,10 @@ func sendReport(outputJson bool) error {
 	needsReboot, rebootReason := systemDetector.CheckRebootRequired()
 	installedKernel := systemDetector.GetLatestInstalledKernel()
 	logger.WithFields(logrus.Fields{
-		"needs_reboot":        needsReboot,
-		"reason":              rebootReason,
-		"installed_kernel":    installedKernel,
-		"running_kernel":      systemInfo.KernelVersion,
+		"needs_reboot":     needsReboot,
+		"reason":           rebootReason,
+		"installed_kernel": installedKernel,
+		"running_kernel":   systemInfo.KernelVersion,
 	}).Info("Reboot status check completed")
 
 	// Get package information
@@ -172,31 +170,31 @@ func sendReport(outputJson bool) error {
 
 	// Create payload
 	payload := &models.ReportPayload{
-		Packages:          packageList,
-		Repositories:      repoList,
-		OSType:            osType,
-		OSVersion:         osVersion,
-		Hostname:          hostname,
-		IP:                ipAddress,
-		Architecture:      architecture,
-		AgentVersion:      version.Version,
-		MachineID:             systemDetector.GetMachineID(),
-		KernelVersion:         systemInfo.KernelVersion,
+		Packages:               packageList,
+		Repositories:           repoList,
+		OSType:                 osType,
+		OSVersion:              osVersion,
+		Hostname:               hostname,
+		IP:                     ipAddress,
+		Architecture:           architecture,
+		AgentVersion:           version.Version,
+		MachineID:              systemDetector.GetMachineID(),
+		KernelVersion:          systemInfo.KernelVersion,
 		InstalledKernelVersion: installedKernel,
-		SELinuxStatus:         systemInfo.SELinuxStatus,
-		SystemUptime:      systemInfo.SystemUptime,
-		LoadAverage:       systemInfo.LoadAverage,
-		CPUModel:          hardwareInfo.CPUModel,
-		CPUCores:          hardwareInfo.CPUCores,
-		RAMInstalled:      hardwareInfo.RAMInstalled,
-		SwapSize:          hardwareInfo.SwapSize,
-		DiskDetails:       hardwareInfo.DiskDetails,
-		GatewayIP:         networkInfo.GatewayIP,
-		DNSServers:        networkInfo.DNSServers,
-		NetworkInterfaces: networkInfo.NetworkInterfaces,
-		ExecutionTime:     executionTime,
-		NeedsReboot:       needsReboot,
-		RebootReason:      rebootReason,
+		SELinuxStatus:          systemInfo.SELinuxStatus,
+		SystemUptime:           systemInfo.SystemUptime,
+		LoadAverage:            systemInfo.LoadAverage,
+		CPUModel:               hardwareInfo.CPUModel,
+		CPUCores:               hardwareInfo.CPUCores,
+		RAMInstalled:           hardwareInfo.RAMInstalled,
+		SwapSize:               hardwareInfo.SwapSize,
+		DiskDetails:            hardwareInfo.DiskDetails,
+		GatewayIP:              networkInfo.GatewayIP,
+		DNSServers:             networkInfo.DNSServers,
+		NetworkInterfaces:      networkInfo.NetworkInterfaces,
+		ExecutionTime:          executionTime,
+		NeedsReboot:            needsReboot,
+		RebootReason:           rebootReason,
 	}
 
 	// If --report-json flag is set, output JSON and exit
@@ -236,18 +234,13 @@ func sendReport(outputJson bool) error {
 			logger.WithError(err).Warn("PatchMon agent update failed, but data was sent successfully")
 		} else {
 			logger.Info("PatchMon agent update completed successfully")
-			// updateAgent() will exit the process after restart, so we won't reach here
-			// But if it does return, skip the update check to prevent loops
 			return nil
 		}
 	} else {
 		// Proactive update check after report (non-blocking with timeout)
-		// Run in a goroutine to avoid blocking the report completion
 		go func() {
-			// Add a delay to prevent immediate checks after service restart
-			// This gives the new process time to fully initialize
 			time.Sleep(5 * time.Second)
-			
+
 			logger.Info("Checking for agent updates...")
 			versionInfo, err := getServerVersionInfo()
 			if err != nil {
@@ -264,10 +257,8 @@ func sendReport(outputJson bool) error {
 					logger.WithError(err).Warn("PatchMon agent update failed, but data was sent successfully")
 				} else {
 					logger.Info("PatchMon agent update completed successfully")
-					// updateAgent() will exit after restart, so this won't be reached
 				}
 			} else if versionInfo.AutoUpdateDisabled && versionInfo.LatestVersion != versionInfo.CurrentVersion {
-				// Update is available but auto-update is disabled
 				logger.WithFields(logrus.Fields{
 					"current": versionInfo.CurrentVersion,
 					"latest":  versionInfo.LatestVersion,
@@ -279,99 +270,6 @@ func sendReport(outputJson bool) error {
 		}()
 	}
 
-	// Collect and send integration data (Docker, etc.) separately
-	// This ensures failures in integrations don't affect core system reporting
-	sendIntegrationData()
-
 	logger.Debug("Report process completed")
 	return nil
-}
-
-// sendIntegrationData collects and sends data from integrations (Docker, etc.)
-func sendIntegrationData() {
-	logger.Debug("Starting integration data collection")
-
-	// Create integration manager
-	integrationMgr := integrations.NewManager(logger)
-
-	// Set enabled checker to respect config.yml settings
-	// Load config first to check integration status
-	if err := cfgManager.LoadConfig(); err != nil {
-		logger.WithError(err).Debug("Failed to load config for integration check")
-	}
-	integrationMgr.SetEnabledChecker(func(name string) bool {
-		return cfgManager.IsIntegrationEnabled(name)
-	})
-
-	// Register available integrations
-	integrationMgr.Register(docker.New(logger))
-	// Future: integrationMgr.Register(proxmox.New(logger))
-	// Future: integrationMgr.Register(kubernetes.New(logger))
-
-	// Discover and collect from all available integrations
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	integrationData := integrationMgr.CollectAll(ctx)
-
-	if len(integrationData) == 0 {
-		logger.Debug("No integration data to send")
-		return
-	}
-
-	// Get system info for integration payloads
-	systemDetector := system.New(logger)
-	hostname, _ := systemDetector.GetHostname()
-	machineID := systemDetector.GetMachineID()
-
-	// Create HTTP client
-	httpClient := client.New(cfgManager, logger)
-
-	// Send Docker data if available
-	if dockerData, exists := integrationData["docker"]; exists && dockerData.Error == "" {
-		sendDockerData(httpClient, dockerData, hostname, machineID)
-	}
-
-	// Future: Send other integration data here
-}
-
-// sendDockerData sends Docker integration data to server
-func sendDockerData(httpClient *client.Client, integrationData *models.IntegrationData, hostname, machineID string) {
-	// Extract Docker data from integration data
-	dockerData, ok := integrationData.Data.(*models.DockerData)
-	if !ok {
-		logger.Warn("Failed to extract Docker data from integration")
-		return
-	}
-
-	payload := &models.DockerPayload{
-		DockerData:   *dockerData,
-		Hostname:     hostname,
-		MachineID:    machineID,
-		AgentVersion: version.Version,
-	}
-
-	logger.WithFields(logrus.Fields{
-		"containers": len(dockerData.Containers),
-		"images":     len(dockerData.Images),
-		"volumes":    len(dockerData.Volumes),
-		"networks":   len(dockerData.Networks),
-		"updates":    len(dockerData.Updates),
-	}).Info("Sending Docker data to server...")
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	response, err := httpClient.SendDockerData(ctx, payload)
-	if err != nil {
-		logger.WithError(err).Warn("Failed to send Docker data (will retry on next report)")
-		return
-	}
-
-	logger.WithFields(logrus.Fields{
-		"containers": response.ContainersReceived,
-		"images":     response.ImagesReceived,
-		"volumes":    response.VolumesReceived,
-		"networks":   response.NetworksReceived,
-		"updates":    response.UpdatesFound,
-	}).Info("Docker data sent successfully")
 }

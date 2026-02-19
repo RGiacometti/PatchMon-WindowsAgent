@@ -4,9 +4,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/spf13/cobra"
 	"patchmon-agent/internal/client"
 	"patchmon-agent/pkg/models"
+
+	"github.com/spf13/cobra"
 )
 
 // pingCmd represents the ping command
@@ -15,7 +16,7 @@ var pingCmd = &cobra.Command{
 	Short: "Test connectivity and credentials",
 	Long:  "Test connectivity to the PatchMon server and validate API credentials.",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if err := checkRoot(); err != nil {
+		if err := checkAdmin(); err != nil {
 			return err
 		}
 

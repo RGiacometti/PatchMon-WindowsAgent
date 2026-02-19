@@ -12,6 +12,7 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	"golang.org/x/sys/windows"
 	lumberjack "gopkg.in/natefinch/lumberjack.v2"
 )
 
@@ -56,8 +57,6 @@ func init() {
 	rootCmd.AddCommand(checkVersionCmd)
 	rootCmd.AddCommand(updateAgentCmd)
 	rootCmd.AddCommand(diagnosticsCmd)
-	// Note: Uninstall functionality removed - use patchmon_remove.sh script instead
-	// rootCmd.AddCommand(uninstallCmd)
 }
 
 // initialiseAgent initialises the configuration manager and logger
@@ -65,9 +64,6 @@ func initialiseAgent() {
 	// Initialise logger
 	logger = logrus.New()
 	// Get timezone for log timestamps
-	// Note: logrus TextFormatter doesn't directly support timezone
-	// The timestamp will use the system timezone, but we can configure
-	// the TZ environment variable to control this
 	tz_loc := utils.GetTimezoneLocation()
 	logger.SetFormatter(&logrus.TextFormatter{
 		DisableTimestamp: false,
@@ -125,11 +121,33 @@ func updateLogLevel(cmd *cobra.Command) {
 	}
 }
 
-// checkRoot ensures the command is run as root
-func checkRoot() error {
-	if os.Geteuid() != 0 {
-		return fmt.Errorf("this command requires root privileges, please run with sudo or as root user")
+// checkAdmin ensures the command is run as Administrator
+func checkAdmin() error {
+	if !isAdmin() {
+		return fmt.Errorf("this command must be run as Administrator")
 	}
 	return nil
 }
 
+// isAdmin checks if the current process is running with Administrator privileges
+func isAdmin() bool {
+	var sid *windows.SID
+	err := windows.AllocateAndInitializeSid(
+		&windows.SECURITY_NT_AUTHORITY,
+		2,
+		windows.SECURITY_BUILTIN_DOMAIN_RID,
+		windows.DOMAIN_ALIAS_RID_ADMINS,
+		0, 0, 0, 0, 0, 0,
+		&sid)
+	if err != nil {
+		return false
+	}
+	defer windows.FreeSid(sid)
+
+	token := windows.Token(0)
+	member, err := token.IsMember(sid)
+	if err != nil {
+		return false
+	}
+	return member
+}

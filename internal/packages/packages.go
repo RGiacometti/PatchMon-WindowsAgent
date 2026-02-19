@@ -1,9 +1,6 @@
 package packages
 
 import (
-	"fmt"
-	"os/exec"
-
 	"patchmon-agent/pkg/models"
 
 	"github.com/sirupsen/logrus"
@@ -11,68 +8,43 @@ import (
 
 // Manager handles package information collection
 type Manager struct {
-	logger     *logrus.Logger
-	aptManager *APTManager
-	dnfManager *DNFManager
-	apkManager *APKManager
+	logger         *logrus.Logger
+	windowsManager *WindowsUpdateManager
 }
 
 // New creates a new package manager
 func New(logger *logrus.Logger) *Manager {
-	aptManager := NewAPTManager(logger)
-	dnfManager := NewDNFManager(logger)
-	apkManager := NewAPKManager(logger)
-
 	return &Manager{
-		logger:     logger,
-		aptManager: aptManager,
-		dnfManager: dnfManager,
-		apkManager: apkManager,
+		logger:         logger,
+		windowsManager: NewWindowsUpdateManager(logger),
 	}
 }
 
-// GetPackages gets package information based on detected package manager
+// GetPackages gets package information from Windows Update.
+// It collects both installed updates and available (pending) updates.
 func (m *Manager) GetPackages() ([]models.Package, error) {
-	packageManager := m.detectPackageManager()
-
-	m.logger.WithField("package_manager", packageManager).Debug("Detected package manager")
-
-	switch packageManager {
-	case "apt":
-		return m.aptManager.GetPackages(), nil
-	case "dnf", "yum":
-		return m.dnfManager.GetPackages(), nil
-	case "apk":
-		return m.apkManager.GetPackages(), nil
-	default:
-		return nil, fmt.Errorf("unsupported package manager: %s", packageManager)
-	}
-}
-
-// detectPackageManager detects which package manager is available on the system
-func (m *Manager) detectPackageManager() string {
-	// Check for APK first (Alpine Linux)
-	if _, err := exec.LookPath("apk"); err == nil {
-		return "apk"
+	// Get installed updates
+	installed, err := m.windowsManager.GetInstalledUpdates()
+	if err != nil {
+		m.logger.Warnf("Failed to get installed updates: %v", err)
+		installed = []models.Package{}
 	}
 
-	// Check for APT
-	if _, err := exec.LookPath("apt"); err == nil {
-		return "apt"
-	}
-	if _, err := exec.LookPath("apt-get"); err == nil {
-		return "apt"
-	}
-
-	// Check for DNF/YUM
-	if _, err := exec.LookPath("dnf"); err == nil {
-		return "dnf"
-	}
-	if _, err := exec.LookPath("yum"); err == nil {
-		return "yum"
+	// Get available updates
+	available, err := m.windowsManager.GetAvailableUpdates()
+	if err != nil {
+		m.logger.Warnf("Failed to get available updates: %v", err)
+		available = []models.Package{}
 	}
 
-	return "unknown"
+	// Combine: installed updates (NeedsUpdate=false) + available updates (NeedsUpdate=true)
+	allPackages := make([]models.Package, 0, len(installed)+len(available))
+	allPackages = append(allPackages, installed...)
+	allPackages = append(allPackages, available...)
+
+	m.logger.Infof("Found %d installed updates and %d available updates", len(installed), len(available))
+
+	return allPackages, nil
 }
 
 // CombinePackageData combines and deduplicates installed and upgradable package lists

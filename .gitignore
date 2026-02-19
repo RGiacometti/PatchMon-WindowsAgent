@@ -32,3 +32,6 @@ go.work.sum
 # .vscode/
 
 build/
+
+# Development documentation (not synced to GitHub)
+docs/

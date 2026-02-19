@@ -14,18 +14,17 @@ import (
 
 const (
 	DefaultAPIVersion      = "v1"
-	DefaultConfigFile      = "/etc/patchmon/config.yml"
-	DefaultCredentialsFile = "/etc/patchmon/credentials.yml"
-	DefaultLogFile         = "/etc/patchmon/logs/patchmon-agent.log"
+	DefaultConfigDir       = `C:\ProgramData\PatchMon`
+	DefaultConfigFile      = `C:\ProgramData\PatchMon\config.yml`
+	DefaultCredentialsFile = `C:\ProgramData\PatchMon\credentials.yml`
+	DefaultLogFile         = `C:\ProgramData\PatchMon\logs\patchmon-agent.log`
 	DefaultLogLevel        = "info"
-	CronFilePath           = "/etc/cron.d/patchmon-agent"
 )
 
 // AvailableIntegrations lists all integrations that can be enabled/disabled
 // Add new integrations here as they are implemented
 var AvailableIntegrations = []string{
-	"docker",
-	// Future: "proxmox", "kubernetes", etc.
+	// Future: Windows-specific integrations
 }
 
 // Manager handles configuration management

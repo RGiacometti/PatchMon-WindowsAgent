@@ -1,25 +1,8 @@
 package constants
 
-// SELinux status constants
-const (
-	SELinuxEnabled    = "enabled"
-	SELinuxDisabled   = "disabled"
-	SELinuxPermissive = "permissive"
-	SELinuxEnforcing  = "enforcing" // Will be mapped to enabled for API compatibility
-)
-
 // OS type constants
 const (
-	OSTypeDebian     = "debian"
-	OSTypeUbuntu     = "ubuntu"
-	OSTypeRHEL       = "rhel"
-	OSTypeCentOS     = "centos"
-	OSTypeFedora     = "fedora"
-	OSTypeRocky      = "rocky"
-	OSTypeAlma       = "almalinux"
-	OSTypePop        = "pop"
-	OSTypeMint       = "linuxmint"
-	OSTypeElementary = "elementary"
+	OSTypeWindows = "windows"
 )
 
 // Architecture constants
@@ -36,7 +19,9 @@ const (
 	NetTypeEthernet = "ethernet"
 	NetTypeWiFi     = "wifi"
 	NetTypeBridge   = "bridge"
+	NetTypeVirtual  = "virtual"
 	NetTypeLoopback = "loopback"
+	NetTypeUnknown  = "unknown"
 )
 
 // IP address families
@@ -47,10 +32,7 @@ const (
 
 // Repository type constants
 const (
-	RepoTypeDeb    = "deb"
-	RepoTypeDebSrc = "deb-src"
-	RepoTypeRPM    = "rpm"
-	RepoTypeAPK    = "apk"
+	RepoTypeWindowsUpdate = "windows-update"
 )
 
 // Log level constants

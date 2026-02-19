@@ -1,8 +1,9 @@
 name: Release
 
 on:
-  release:
-    types: [published]
+  push:
+    tags:
+      - 'v*'
 
 permissions:
   contents: write
@@ -10,17 +11,15 @@ permissions:
 jobs:
   build:
     name: Build and Upload Binaries
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     strategy:
       matrix:
         include:
-          - goos: linux
+          - goos: windows
             goarch: 'amd64'
-          - goos: linux
+          - goos: windows
             goarch: 'arm64'
-          - goos: linux
-            goarch: 'arm'
-          - goos: linux
+          - goos: windows
             goarch: '386'
 
     steps:
@@ -40,10 +39,11 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
         run: |
-          OUTPUT_NAME="patchmon-agent-${{ matrix.goos }}-${{ matrix.goarch }}"
-          go build -ldflags="-s -w -X patchmon-agent/internal/version.Version=${{ github.event.release.tag_name }}" -o "${OUTPUT_NAME}" ./cmd/patchmon-agent
-          
+          $VERSION = "${{ github.ref_name }}"
+          $OUTPUT_NAME = "patchmon-agent-${{ matrix.goos }}-${{ matrix.goarch }}.exe"
+          go build -buildvcs=false -ldflags="-s -w -X patchmon-agent/internal/version.Version=$VERSION" -o "$OUTPUT_NAME" ./cmd/patchmon-agent
+
       - name: Upload binary to release
         uses: softprops/action-gh-release@v2
         with:
-          files: patchmon-agent-${{ matrix.goos }}-${{ matrix.goarch }}
+          files: patchmon-agent-${{ matrix.goos }}-${{ matrix.goarch }}.exe
